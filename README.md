@@ -41,6 +41,33 @@ The filesystem layout mirrors the intended S3 layout we will keep using later:
 - `curated/tile_summary/partition_date=YYYY-MM-DD/...`
 
 For local validation, those layers are written under `HYDROSAT_DATA_LAKE_ROOT`, which defaults to `/tmp/hydrosat-data-lake`.
+When `HYDROSAT_DATA_LAKE_BUCKET` is set, the same layer layout is written to S3 by using `HYDROSAT_DATA_LAKE_PREFIX` as the top-level prefix.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  Feed[Sample Satellite Feed] --> Extract[Python Extract]
+  Extract --> Raw[Raw Layer]
+  Raw --> Stage[Staging Transform]
+  Stage --> Staging[Staging Layer]
+  Staging --> Curate[Curated Aggregate]
+  Curate --> Curated[Curated Layer]
+  Curate --> Dagster[Dagster Job]
+  Dagster --> Alertmanager[Alertmanager]
+
+  subgraph Storage
+    Raw
+    Staging
+    Curated
+  end
+```
+
+Storage modes:
+
+- local development uses `HYDROSAT_DATA_LAKE_ROOT`
+- cluster execution uses `HYDROSAT_DATA_LAKE_BUCKET`
+- both modes preserve the same raw, staging, and curated layer layout
 
 ## Local Development
 

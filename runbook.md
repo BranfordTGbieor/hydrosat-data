@@ -7,6 +7,7 @@ Use this document when you want to prove that:
 - the Dagster package installs cleanly
 - unit tests cover the success and failure paths
 - the layered lakehouse sample pipeline behaves as expected
+- the pipeline can target local storage now and an S3-backed lake in-cluster later
 - the Alertmanager payload shape is correct
 - the Docker image builds locally
 - the Docker Hub release workflow is ready to publish
@@ -32,6 +33,7 @@ Run these sections in order:
 7. Container build validation
 8. Docker Hub release workflow validation
 9. Integration handoff validation for `hydrosat-infra`
+10. S3-backed runtime validation
 
 ## 2. Local Environment Setup
 
@@ -96,8 +98,8 @@ pytest -q
 Expected success:
 
 - all tests pass
-- success-path test confirms `hydrosat_demo_job` returns `success=True`
-- failure-path test confirms `hydrosat_demo_job` returns `success=False`
+- success-path test confirms `hydrosat_lakehouse_job` returns `success=True`
+- failure-path test confirms `hydrosat_lakehouse_job` returns `success=False`
 - payload-format tests confirm the Alertmanager body contains the expected labels and annotations
 
 Failure signs:
@@ -269,6 +271,30 @@ Failure signs:
 
 - malformed JSON
 - missing aggregate fields
+
+### 6.3 Component: Storage Mode Configuration
+
+Commands:
+
+```bash
+python - <<'PY'
+import os
+print("HYDROSAT_DATA_LAKE_ROOT=", os.getenv("HYDROSAT_DATA_LAKE_ROOT", "/tmp/hydrosat-data-lake"))
+print("HYDROSAT_DATA_LAKE_BUCKET=", os.getenv("HYDROSAT_DATA_LAKE_BUCKET", ""))
+print("HYDROSAT_DATA_LAKE_PREFIX=", os.getenv("HYDROSAT_DATA_LAKE_PREFIX", "hydrosat"))
+PY
+```
+
+Expected success:
+
+- local runs can rely only on `HYDROSAT_DATA_LAKE_ROOT`
+- cluster runs can switch to S3 by setting `HYDROSAT_DATA_LAKE_BUCKET`
+- `HYDROSAT_DATA_LAKE_PREFIX` defaults to `hydrosat`
+
+Failure signs:
+
+- bucket expected in-cluster but unset
+- prefix not aligned with the expected raw/staging/curated layout
 
 ## 7. Alert Payload Validation
 
@@ -476,14 +502,43 @@ Failure signs:
 - image tag exists in Docker Hub but Kubernetes cannot pull it
 - wrong registry/repository string in infra values
 
-## 11. Completion Criteria
+## 11. S3-Backed Runtime Validation
+
+### 11.1 Component: Bucket-Backed Lake Layout
+
+This requires the S3 bucket and Dagster IRSA role from `hydrosat-infra`.
+
+Commands:
+
+```bash
+export HYDROSAT_DATA_LAKE_BUCKET=<bucket-from-hydrosat-infra>
+export HYDROSAT_DATA_LAKE_PREFIX=hydrosat
+unset HYDROSAT_DATA_LAKE_ROOT
+```
+
+Then rerun the success-path execution from section `5.1` in an environment that has AWS credentials or the expected IRSA role.
+
+Expected success:
+
+- raw, staging, and curated outputs are written to:
+  - `s3://<bucket>/hydrosat/raw/...`
+  - `s3://<bucket>/hydrosat/staging/...`
+  - `s3://<bucket>/hydrosat/curated/...`
+
+Failure signs:
+
+- `AccessDenied` from S3
+- bucket not found
+- wrong service account IAM role in-cluster
+
+## 12. Completion Criteria
 
 You can treat data-repo validation as complete when all of the following are true:
 
 - package installs successfully
 - compile and test steps pass locally
-- demo job succeeds on the success path and fails on the intentional failure path
+- the layered lakehouse job succeeds on the success path and fails on the intentional failure path
 - Alertmanager payload shape is correct
 - Docker image builds locally
 - Docker Hub push works manually or via GitHub Actions
-- published image coordinates are ready to hand off to `hydrosat-infra`
+- published image coordinates are promoted into `hydrosat-infra`

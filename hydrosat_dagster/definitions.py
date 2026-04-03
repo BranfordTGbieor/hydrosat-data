@@ -7,6 +7,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+import boto3
 from dagster import Definitions, Failure, RunFailureSensorContext, job, op, run_failure_sensor
 
 SAMPLE_SATELLITE_OBSERVATIONS = [
@@ -50,6 +51,14 @@ def _lake_root() -> Path:
     return Path(os.getenv("HYDROSAT_DATA_LAKE_ROOT", "/tmp/hydrosat-data-lake"))
 
 
+def _lake_bucket() -> str:
+    return os.getenv("HYDROSAT_DATA_LAKE_BUCKET", "").strip()
+
+
+def _lake_prefix() -> str:
+    return os.getenv("HYDROSAT_DATA_LAKE_PREFIX", "hydrosat").strip("/")
+
+
 def _partition_date(value: str | None) -> str:
     if value:
         date.fromisoformat(value)
@@ -57,16 +66,54 @@ def _partition_date(value: str | None) -> str:
     return date.today().isoformat()
 
 
-def _jsonl_write(path: Path, records: list[dict]) -> None:
+def _s3_client():
+    return boto3.client("s3")
+
+
+def _lake_uri(*parts: str) -> str:
+    relative_path = "/".join(part.strip("/") for part in parts if part)
+    bucket = _lake_bucket()
+    prefix = _lake_prefix()
+
+    if bucket:
+        prefix_path = f"{prefix}/{relative_path}" if prefix else relative_path
+        return f"s3://{bucket}/{prefix_path}"
+
+    return str(_lake_root() / relative_path)
+
+
+def _split_s3_uri(uri: str) -> tuple[str, str]:
+    without_scheme = uri.removeprefix("s3://")
+    bucket, _, key = without_scheme.partition("/")
+    return bucket, key
+
+
+def _write_text(uri: str, text: str, content_type: str) -> None:
+    if uri.startswith("s3://"):
+        bucket, key = _split_s3_uri(uri)
+        _s3_client().put_object(Bucket=bucket, Key=key, Body=text.encode("utf-8"), ContentType=content_type)
+        return
+
+    path = Path(uri)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record) + "\n")
+    path.write_text(text, encoding="utf-8")
 
 
-def _jsonl_read(path: Path) -> list[dict]:
-    with path.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
+def _read_text(uri: str) -> str:
+    if uri.startswith("s3://"):
+        bucket, key = _split_s3_uri(uri)
+        response = _s3_client().get_object(Bucket=bucket, Key=key)
+        return response["Body"].read().decode("utf-8")
+
+    return Path(uri).read_text(encoding="utf-8")
+
+
+def _jsonl_write(uri: str, records: list[dict]) -> None:
+    _write_text(uri, "".join(f"{json.dumps(record)}\n" for record in records), "application/x-ndjson")
+
+
+def _jsonl_read(uri: str) -> list[dict]:
+    return [json.loads(line) for line in _read_text(uri).splitlines() if line.strip()]
 
 
 def build_failure_message(job_name: str, run_id: str, failure_message: str) -> str:
@@ -107,7 +154,7 @@ def extract_satellite_observations(context) -> dict:
     """Simulate a Python-driven extract into the raw layer."""
     partition_date = _partition_date(context.op_config["batch_date"])
     batch_id = str(uuid4())
-    raw_path = _lake_root() / "raw" / "satellite_observations" / f"ingest_date={partition_date}" / f"{batch_id}.jsonl"
+    raw_path = _lake_uri("raw", "satellite_observations", f"ingest_date={partition_date}", f"{batch_id}.jsonl")
 
     raw_records = []
     for record in SAMPLE_SATELLITE_OBSERVATIONS:
@@ -135,13 +182,12 @@ def extract_satellite_observations(context) -> dict:
 @op
 def stage_satellite_observations(context, raw_batch: dict) -> dict:
     """Clean and enrich raw records into a staging-friendly shape."""
-    raw_records = _jsonl_read(Path(raw_batch["raw_path"]))
-    staged_path = (
-        _lake_root()
-        / "staging"
-        / "satellite_observations"
-        / f"ingest_date={raw_batch['partition_date']}"
-        / f"{raw_batch['batch_id']}.jsonl"
+    raw_records = _jsonl_read(raw_batch["raw_path"])
+    staged_path = _lake_uri(
+        "staging",
+        "satellite_observations",
+        f"ingest_date={raw_batch['partition_date']}",
+        f"{raw_batch['batch_id']}.jsonl",
     )
 
     staged_records = []
@@ -177,7 +223,7 @@ def stage_satellite_observations(context, raw_batch: dict) -> dict:
 @op
 def curate_tile_summary(context, staged_batch: dict) -> dict:
     """Aggregate staged records into a curated tile-level summary."""
-    staged_records = _jsonl_read(Path(staged_batch["staged_path"]))
+    staged_records = _jsonl_read(staged_batch["staged_path"])
     if staged_batch["should_fail"]:
         raise Failure("Intentional failure to validate run-failure alerting.")
 
@@ -202,15 +248,13 @@ def curate_tile_summary(context, staged_batch: dict) -> dict:
             }
         )
 
-    curated_path = (
-        _lake_root()
-        / "curated"
-        / "tile_summary"
-        / f"partition_date={staged_batch['partition_date']}"
-        / f"{staged_batch['batch_id']}.json"
+    curated_path = _lake_uri(
+        "curated",
+        "tile_summary",
+        f"partition_date={staged_batch['partition_date']}",
+        f"{staged_batch['batch_id']}.json",
     )
-    curated_path.parent.mkdir(parents=True, exist_ok=True)
-    curated_path.write_text(json.dumps(curated_records, indent=2), encoding="utf-8")
+    _write_text(curated_path, json.dumps(curated_records, indent=2), "application/json")
     context.log.info("Wrote %s curated tile summaries to %s", len(curated_records), curated_path)
 
     return {
