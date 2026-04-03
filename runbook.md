@@ -9,6 +9,7 @@ Use this document when you want to prove that:
 - the layered lakehouse sample pipeline behaves as expected
 - the pipeline can target local storage now and an S3-backed lake in-cluster later
 - dbt is responsible for the staging and curated transforms
+- the daily schedule and recovery sensor behave as expected
 - the Alertmanager payload shape is correct
 - the Docker image builds locally
 - the Docker Hub release workflow is ready to publish
@@ -29,13 +30,14 @@ Run these sections in order:
 2. Static package validation
 3. Unit test validation
 4. Direct Dagster job execution
-5. Raw, staging, and curated data validation
-6. dbt project validation
-7. Alert payload validation
-8. Container build validation
-9. Docker Hub release workflow validation
-10. Integration handoff validation for `hydrosat-infra`
-11. S3-backed runtime validation
+5. Schedule and recovery sensor validation
+6. Raw, staging, and curated data validation
+7. dbt project validation
+8. Alert payload validation
+9. Container build validation
+10. Docker Hub release workflow validation
+11. Integration handoff validation for `hydrosat-infra`
+12. S3-backed runtime validation
 
 ## 2. Local Environment Setup
 
@@ -48,7 +50,7 @@ cd /home/branford-t-gbieor/Desktop/gbieor/applications/exercises/hydrosat/hydros
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -e ".[dev]"
+python -m pip install -e ".[dev]"
 ```
 
 Expected success:
@@ -102,6 +104,8 @@ Expected success:
 - all tests pass
 - success-path test confirms `hydrosat_lakehouse_job` returns `success=True`
 - failure-path test confirms `hydrosat_lakehouse_job` returns `success=False`
+- schedule test confirms the current UTC partition is injected into run config
+- recovery-sensor tests confirm a missing curated partition yields a `RunRequest` and an existing partition yields a `SkipReason`
 - payload-format tests confirm the Alertmanager body contains the expected labels and annotations
 
 Failure signs:
@@ -204,9 +208,93 @@ Failure signs:
 - result is `True`
 - failure occurs for the wrong reason
 
-## 6. Raw, Staging, and Curated Data Validation
+## 6. Schedule and Recovery Sensor Validation
 
-### 6.1 Component: Layered Output Layout
+### 6.1 Component: Daily Dagster Schedule
+
+Commands:
+
+```bash
+python - <<'PY'
+from hydrosat_dagster.definitions import daily_lakehouse_schedule
+
+run_config = daily_lakehouse_schedule(None)
+print(run_config)
+PY
+```
+
+Expected success:
+
+- output contains `extract_satellite_observations`
+- output contains `should_fail: False`
+- output contains today's UTC date in `batch_date`
+
+Failure signs:
+
+- missing `batch_date`
+- `should_fail` defaults incorrectly
+- import or schedule-construction errors
+
+### 6.2 Component: Partition Recovery Sensor RunRequest
+
+Commands:
+
+```bash
+export HYDROSAT_DATA_LAKE_ROOT=/tmp/hydrosat-data-lake-sensor
+rm -rf "${HYDROSAT_DATA_LAKE_ROOT}"
+
+python - <<'PY'
+from hydrosat_dagster.definitions import lakehouse_partition_recovery_sensor
+
+result = lakehouse_partition_recovery_sensor(None)
+print(type(result).__name__)
+print(getattr(result, "run_key", None))
+print(getattr(result, "run_config", None))
+PY
+```
+
+Expected success:
+
+- evaluation returns `RunRequest`
+- `run_key` starts with `lakehouse-recovery-`
+- run config targets today's UTC partition
+
+Failure signs:
+
+- returns `SkipReason` when the curated partition does not exist
+- returns malformed run config
+
+### 6.3 Component: Partition Recovery Sensor SkipReason
+
+Commands:
+
+```bash
+export HYDROSAT_DATA_LAKE_ROOT=/tmp/hydrosat-data-lake-sensor
+mkdir -p "${HYDROSAT_DATA_LAKE_ROOT}/curated/tile_summary/partition_date=$(date -u +%F)"
+printf '[]' > "${HYDROSAT_DATA_LAKE_ROOT}/curated/tile_summary/partition_date=$(date -u +%F)/existing-batch.json"
+
+python - <<'PY'
+from hydrosat_dagster.definitions import lakehouse_partition_recovery_sensor
+
+result = lakehouse_partition_recovery_sensor(None)
+print(type(result).__name__)
+print(getattr(result, "skip_message", None))
+PY
+```
+
+Expected success:
+
+- evaluation returns `SkipReason`
+- skip message mentions the current UTC partition
+
+Failure signs:
+
+- sensor requests a duplicate run even though curated output already exists
+- missing skip message
+
+## 7. Raw, Staging, and Curated Data Validation
+
+### 7.1 Component: Layered Output Layout
 
 Commands:
 
@@ -243,7 +331,7 @@ Failure signs:
 - missing directories
 - curated file absent on the success path
 
-### 6.2 Component: Curated Summary Content
+### 7.2 Component: Curated Summary Content
 
 Commands:
 
@@ -274,7 +362,7 @@ Failure signs:
 - malformed JSON
 - missing aggregate fields
 
-### 6.3 Component: Storage Mode Configuration
+### 7.3 Component: Storage Mode Configuration
 
 Commands:
 
@@ -298,9 +386,9 @@ Failure signs:
 - bucket expected in-cluster but unset
 - prefix not aligned with the expected raw/staging/curated layout
 
-## 7. dbt Project Validation
+## 8. dbt Project Validation
 
-### 7.1 Component: dbt Project Layout
+### 8.1 Component: dbt Project Layout
 
 Files:
 
@@ -325,7 +413,7 @@ Failure signs:
 - missing model files
 - missing `profiles.yml`
 
-### 7.2 Component: dbt Environment Surface
+### 8.2 Component: dbt Environment Surface
 
 Commands:
 
@@ -349,9 +437,9 @@ Failure signs:
 - dbt receives no raw/staging/curated URIs
 - DuckDB path points at a non-writable location
 
-## 8. Alert Payload Validation
+## 9. Alert Payload Validation
 
-### 8.1 Component: Failure Message Formatter
+### 9.1 Component: Failure Message Formatter
 
 Commands:
 
@@ -374,7 +462,7 @@ Failure signs:
 - missing contextual fields
 - malformed string body
 
-### 8.2 Component: Alertmanager Payload Builder
+### 9.2 Component: Alertmanager Payload Builder
 
 Commands:
 
@@ -404,7 +492,7 @@ Failure signs:
 - payload not JSON-serializable
 - missing labels required by Alertmanager routing
 
-### 8.3 Component: Alert Delivery Behavior When URL Is Missing
+### 9.3 Component: Alert Delivery Behavior When URL Is Missing
 
 Commands:
 
@@ -426,9 +514,9 @@ Failure signs:
 
 - import or sensor construction errors
 
-## 9. Container Build Validation
+## 10. Container Build Validation
 
-### 9.1 Component: Docker Image Build
+### 10.1 Component: Docker Image Build
 
 Commands:
 
@@ -448,7 +536,7 @@ Failure signs:
 - missing files in the image build
 - dependency installation failures inside the Docker build
 
-### 9.2 Component: Container Runtime Smoke Test
+### 10.2 Component: Container Runtime Smoke Test
 
 Commands:
 
@@ -466,9 +554,9 @@ Failure signs:
 - package import failure inside container
 - wrong working directory or missing installed package
 
-## 10. Docker Hub Release Workflow Validation
+## 11. Docker Hub Release Workflow Validation
 
-### 10.1 Component: GitHub Actions Publish Workflow
+### 11.1 Component: GitHub Actions Publish Workflow
 
 File:
 
@@ -504,7 +592,7 @@ Failure signs:
 - missing GitHub secret or variable
 - Docker Hub repository typo
 
-### 10.2 Component: Manual Local Docker Hub Push
+### 11.2 Component: Manual Local Docker Hub Push
 
 Commands:
 
@@ -527,9 +615,9 @@ Failure signs:
 - repository not found
 - rate limit or connectivity issues
 
-## 11. Integration Handoff to Infra
+## 12. Integration Handoff to Infra
 
-### 11.1 Component: Image Tag Handoff
+### 12.1 Component: Image Tag Handoff
 
 After publishing a version tag, `hydrosat-data` dispatches a promotion event and `hydrosat-infra` updates GitOps values automatically.
 
@@ -555,9 +643,9 @@ Failure signs:
 - image tag exists in Docker Hub but Kubernetes cannot pull it
 - wrong registry/repository string in infra values
 
-## 12. S3-Backed Runtime Validation
+## 13. S3-Backed Runtime Validation
 
-### 12.1 Component: Bucket-Backed Lake Layout
+### 13.1 Component: Bucket-Backed Lake Layout
 
 This requires the S3 bucket and Dagster IRSA role from `hydrosat-infra`.
 
@@ -584,13 +672,14 @@ Failure signs:
 - bucket not found
 - wrong service account IAM role in-cluster
 
-## 13. Completion Criteria
+## 14. Completion Criteria
 
 You can treat data-repo validation as complete when all of the following are true:
 
 - package installs successfully
 - compile and test steps pass locally
 - the layered lakehouse job succeeds on the success path and fails on the intentional failure path
+- the daily schedule and recovery sensor behave correctly against missing and existing curated partitions
 - dbt project files and environment wiring are valid
 - Alertmanager payload shape is correct
 - Docker image builds locally

@@ -10,6 +10,7 @@ Dagster application repository for the Hydrosat platform.
 This repo owns:
 
 - Dagster jobs, ops, and sensors
+- Dagster schedules and recovery sensors
 - unit tests
 - the Docker image build
 - application CI
@@ -33,6 +34,8 @@ The current sample project is a small lakehouse-style pipeline orchestrated by D
 1. Python extraction writes raw satellite observation records
 2. dbt transforms clean and enrich those records into `staging`
 3. dbt produces curated tile-level analytical summaries in `curated`
+4. a daily Dagster schedule targets the current UTC partition
+5. a recovery sensor requests the same partition if the curated layer is still missing
 
 The filesystem layout mirrors the intended S3 layout we will keep using later:
 
@@ -75,13 +78,21 @@ dbt execution model:
 - Dagster invokes the bundled dbt project with `dbt-duckdb`
 - dbt reads `raw`, materializes transformations in DuckDB, and exports `staging` and `curated` back into the lake layout
 
+Operational behavior:
+
+- `daily_lakehouse_schedule` runs the pipeline at `03:00 UTC`
+- `lakehouse_partition_recovery_sensor` checks whether `curated/tile_summary/partition_date=<today>/` already exists
+- the recovery sensor only requests a run when the expected curated partition is absent
+- `alertmanager_job_failure_alert` remains the failure-notification path for run failures
+
 ## Local Development
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
-pytest
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+python -m pytest
 ```
 
 ## Container Build

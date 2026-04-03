@@ -8,7 +8,19 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import boto3
-from dagster import Definitions, Failure, RunFailureSensorContext, job, op, run_failure_sensor
+from dagster import (
+    Definitions,
+    Failure,
+    RunFailureSensorContext,
+    RunRequest,
+    SensorEvaluationContext,
+    SkipReason,
+    job,
+    op,
+    run_failure_sensor,
+    schedule,
+    sensor,
+)
 
 SAMPLE_SATELLITE_OBSERVATIONS = [
     {
@@ -81,6 +93,10 @@ def _partition_date(value: str | None) -> str:
     return date.today().isoformat()
 
 
+def _operational_partition_date() -> str:
+    return datetime.now(UTC).date().isoformat()
+
+
 def _s3_client():
     return boto3.client("s3")
 
@@ -135,6 +151,22 @@ def _json_read(uri: str) -> list[dict]:
     return json.loads(_read_text(uri))
 
 
+def _curated_partition_prefix(partition_date: str) -> str:
+    return _lake_uri("curated", "tile_summary", f"partition_date={partition_date}")
+
+
+def _partition_has_curated_output(partition_date: str) -> bool:
+    partition_prefix = _curated_partition_prefix(partition_date)
+
+    if partition_prefix.startswith("s3://"):
+        bucket, key_prefix = _split_s3_uri(partition_prefix)
+        response = _s3_client().list_objects_v2(Bucket=bucket, Prefix=f"{key_prefix.rstrip('/')}/", MaxKeys=1)
+        return bool(response.get("Contents"))
+
+    partition_path = Path(partition_prefix)
+    return partition_path.exists() and any(partition_path.glob("*.json"))
+
+
 def _run_dbt_command(command: list[str], env: dict[str, str]) -> None:
     process = subprocess.run(
         command,
@@ -181,6 +213,19 @@ def build_alertmanager_payload(job_name: str, run_id: str, failure_message: str)
             "startsAt": failed_at,
         }
     ]
+
+
+def build_lakehouse_run_config(batch_date: str, should_fail: bool = False) -> dict:
+    return {
+        "ops": {
+            "extract_satellite_observations": {
+                "config": {
+                    "batch_date": batch_date,
+                    "should_fail": should_fail,
+                }
+            }
+        }
+    }
 
 
 @op(config_schema={"batch_date": str, "should_fail": bool})
@@ -270,6 +315,35 @@ def hydrosat_lakehouse_job():
     transform_with_dbt(extract_satellite_observations())
 
 
+@schedule(
+    cron_schedule="0 3 * * *",
+    execution_timezone="UTC",
+    job=hydrosat_lakehouse_job,
+    name="daily_lakehouse_schedule",
+)
+def daily_lakehouse_schedule(_context):
+    """Run the lakehouse pipeline once per UTC day for the current partition date."""
+    return build_lakehouse_run_config(batch_date=_operational_partition_date())
+
+
+@sensor(name="lakehouse_partition_recovery_sensor", minimum_interval_seconds=300, job=hydrosat_lakehouse_job)
+def lakehouse_partition_recovery_sensor(_context: SensorEvaluationContext):
+    """Trigger the daily partition if the expected curated output is still missing."""
+    partition_date = _operational_partition_date()
+
+    if _partition_has_curated_output(partition_date):
+        return SkipReason(f"Curated partition for {partition_date} already exists.")
+
+    return RunRequest(
+        run_key=f"lakehouse-recovery-{partition_date}",
+        run_config=build_lakehouse_run_config(batch_date=partition_date),
+        tags={
+            "hydrosat/partition_date": partition_date,
+            "hydrosat/trigger": "recovery-sensor",
+        },
+    )
+
+
 @run_failure_sensor(name="alertmanager_job_failure_alert", monitored_jobs=[hydrosat_lakehouse_job], minimum_interval_seconds=30)
 def alertmanager_job_failure_alert(context: RunFailureSensorContext):
     """Forward Dagster job failures to Alertmanager so alert routing stays centralized."""
@@ -305,5 +379,6 @@ def alertmanager_job_failure_alert(context: RunFailureSensorContext):
 
 defs = Definitions(
     jobs=[hydrosat_lakehouse_job],
-    sensors=[alertmanager_job_failure_alert],
+    schedules=[daily_lakehouse_schedule],
+    sensors=[alertmanager_job_failure_alert, lakehouse_partition_recovery_sensor],
 )

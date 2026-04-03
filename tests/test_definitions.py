@@ -5,21 +5,16 @@ from hydrosat_dagster.definitions import (
     SAMPLE_SATELLITE_OBSERVATIONS,
     build_alertmanager_payload,
     build_failure_message,
+    build_lakehouse_run_config,
+    daily_lakehouse_schedule,
     hydrosat_lakehouse_job,
+    lakehouse_partition_recovery_sensor,
 )
+from dagster import RunRequest, SkipReason
 
 
 def lakehouse_run_config(should_fail: bool) -> dict:
-    return {
-        "ops": {
-            "extract_satellite_observations": {
-                "config": {
-                    "batch_date": "2026-04-01",
-                    "should_fail": should_fail,
-                }
-            }
-        }
-    }
+    return build_lakehouse_run_config(batch_date="2026-04-01", should_fail=should_fail)
 
 
 def fake_dbt_runner(command: list[str], env: dict[str, str]) -> None:
@@ -148,3 +143,37 @@ def test_alertmanager_payload_contains_expected_labels_and_annotations():
     assert alert["labels"]["run_id"] == "abc123"
     assert alert["annotations"]["summary"] == "Dagster job failed: hydrosat_lakehouse_job"
     assert alert["annotations"]["description"] == "boom"
+
+
+def test_daily_lakehouse_schedule_targets_current_partition(monkeypatch):
+    monkeypatch.setattr("hydrosat_dagster.definitions._operational_partition_date", lambda: "2026-04-02")
+
+    run_request = daily_lakehouse_schedule(None)
+
+    assert run_request == build_lakehouse_run_config(batch_date="2026-04-02")
+
+
+def test_recovery_sensor_requests_run_when_curated_partition_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("HYDROSAT_DATA_LAKE_ROOT", str(tmp_path))
+    monkeypatch.setattr("hydrosat_dagster.definitions._operational_partition_date", lambda: "2026-04-03")
+
+    result = lakehouse_partition_recovery_sensor(None)
+
+    assert isinstance(result, RunRequest)
+    assert result.run_key == "lakehouse-recovery-2026-04-03"
+    assert result.run_config == build_lakehouse_run_config(batch_date="2026-04-03")
+    assert result.tags["hydrosat/trigger"] == "recovery-sensor"
+
+
+def test_recovery_sensor_skips_when_curated_partition_exists(tmp_path, monkeypatch):
+    monkeypatch.setenv("HYDROSAT_DATA_LAKE_ROOT", str(tmp_path))
+    monkeypatch.setattr("hydrosat_dagster.definitions._operational_partition_date", lambda: "2026-04-03")
+
+    curated_dir = tmp_path / "curated" / "tile_summary" / "partition_date=2026-04-03"
+    curated_dir.mkdir(parents=True, exist_ok=True)
+    (curated_dir / "batch-1.json").write_text("[]", encoding="utf-8")
+
+    result = lakehouse_partition_recovery_sensor(None)
+
+    assert isinstance(result, SkipReason)
+    assert "2026-04-03" in result.skip_message
