@@ -98,3 +98,18 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+
+      - name: Notify infra repo of released image tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HYDROSAT_INFRA_REPO_TOKEN }}
+          repository: BranfordTGbieor/hydrosat-infra
+          event-type: promote-dagster-image
+          client-payload: >-
+            {
+              "image_repository": "docker.io/${{ vars.DOCKERHUB_REPOSITORY }}",
+              "image_tag": "${{ github.ref_name }}",
+              "source_repository": "${{ github.repository }}",
+              "source_sha": "${{ github.sha }}"
+            }

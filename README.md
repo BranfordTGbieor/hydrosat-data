@@ -48,10 +48,11 @@ Image publishing is handled directly in the application CI workflow. Configure:
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
 - `DOCKERHUB_REPOSITORY`
+- `HYDROSAT_INFRA_REPO_TOKEN`
 
 Publish flow:
 
 1. pushes from `main` publish `latest`
 2. pushes of tags like `v0.1.0` publish immutable version tags
-3. pull requests and non-release branches still build the image but do not push it
-4. the promoted image tag is then handed to the separate infra repo for GitOps rollout
+3. release-tag pushes notify `hydrosat-infra` to promote that exact tag
+4. pull requests and non-release branches still build the image but do not push it
