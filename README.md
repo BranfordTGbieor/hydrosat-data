@@ -1,5 +1,10 @@
 # Hydrosat Data
 
+![Dagster](https://img.shields.io/badge/Dagster-Orchestration-5C6AC4?logo=dagster&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Image%20Build-2496ED?logo=docker&logoColor=white)
+![Docker%20Hub](https://img.shields.io/badge/Docker%20Hub-Release-1D63ED?logo=docker&logoColor=white)
+![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-App%20CI-2088FF?logo=githubactions&logoColor=white)
+
 Dagster application repository for the Hydrosat platform.
 
 This repo owns:
@@ -38,7 +43,13 @@ docker build -t hydrosat-dagster:local .
 
 ## Release Direction
 
-The intended next step is to add a release workflow that:
+The repository now includes a Docker Hub release workflow skeleton. To make it fully operational, configure:
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
+- `DOCKERHUB_REPOSITORY`
+
+Release flow:
 
 1. builds the image
 2. tags it for Docker Hub
