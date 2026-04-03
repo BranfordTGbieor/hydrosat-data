@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -167,6 +168,12 @@ def _partition_has_curated_output(partition_date: str) -> bool:
     return partition_path.exists() and any(partition_path.glob("*.json"))
 
 
+def _ensure_local_parent_dir(uri: str) -> None:
+    if uri.startswith("s3://"):
+        return
+    Path(uri).parent.mkdir(parents=True, exist_ok=True)
+
+
 def _run_dbt_command(command: list[str], env: dict[str, str]) -> None:
     process = subprocess.run(
         command,
@@ -180,6 +187,10 @@ def _run_dbt_command(command: list[str], env: dict[str, str]) -> None:
         raise Failure(
             f"dbt command failed: {' '.join(command)}\nstdout:\n{process.stdout}\nstderr:\n{process.stderr}"
         )
+
+
+def _dbt_cli_command(*args: str) -> list[str]:
+    return [sys.executable, "-m", "dbt.cli.main", *args]
 
 
 def build_failure_message(job_name: str, run_id: str, failure_message: str) -> str:
@@ -276,6 +287,8 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
 
     duckdb_path = _dbt_duckdb_path()
     duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_local_parent_dir(staged_path)
+    _ensure_local_parent_dir(curated_path)
 
     env = {
         **os.environ,
@@ -286,9 +299,29 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
         "HYDROSAT_DUCKDB_PATH": str(duckdb_path),
     }
 
-    _run_dbt_command(["dbt", "build", "--project-dir", str(_dbt_project_dir()), "--profiles-dir", str(_dbt_project_dir()), "--target", "hydrosat"], env)
     _run_dbt_command(
-        ["dbt", "run-operation", "export_lake_outputs", "--project-dir", str(_dbt_project_dir()), "--profiles-dir", str(_dbt_project_dir()), "--target", "hydrosat"],
+        _dbt_cli_command(
+            "build",
+            "--project-dir",
+            str(_dbt_project_dir()),
+            "--profiles-dir",
+            str(_dbt_project_dir()),
+            "--target",
+            "hydrosat",
+        ),
+        env,
+    )
+    _run_dbt_command(
+        _dbt_cli_command(
+            "run-operation",
+            "export_lake_outputs",
+            "--project-dir",
+            str(_dbt_project_dir()),
+            "--profiles-dir",
+            str(_dbt_project_dir()),
+            "--target",
+            "hydrosat",
+        ),
         env,
     )
 

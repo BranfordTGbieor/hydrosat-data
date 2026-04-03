@@ -18,3 +18,4 @@ Thumbs.db
 .vscode/
 dbt/target/
 dbt/logs/
+dbt/.user.yml
