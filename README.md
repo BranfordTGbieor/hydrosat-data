@@ -54,5 +54,5 @@ Publish flow:
 
 1. pushes from `main` publish `latest`
 2. pushes of tags like `v0.1.0` publish immutable version tags
-3. release-tag pushes notify `hydrosat-infra` to promote that exact tag
+3. release-tag pushes notify `hydrosat-infra` to promote that exact tag into GitOps values
 4. pull requests and non-release branches still build the image but do not push it
