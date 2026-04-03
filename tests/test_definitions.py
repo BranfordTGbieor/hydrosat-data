@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from hydrosat_dagster.definitions import (
     SAMPLE_SATELLITE_OBSERVATIONS,
@@ -50,6 +51,7 @@ def fake_dbt_runner(command: list[str], env: dict[str, str]) -> None:
         staged_records.append(staged_record)
         by_tile.setdefault(staged_record["tile_id"], []).append(staged_record)
 
+    Path(staged_path).parent.mkdir(parents=True, exist_ok=True)
     with open(staged_path, "w", encoding="utf-8") as handle:
         for record in staged_records:
             handle.write(json.dumps(record) + "\n")
@@ -71,6 +73,7 @@ def fake_dbt_runner(command: list[str], env: dict[str, str]) -> None:
             }
         )
 
+    Path(curated_path).parent.mkdir(parents=True, exist_ok=True)
     with open(curated_path, "w", encoding="utf-8") as handle:
         json.dump(curated_records, handle)
 
