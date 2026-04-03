@@ -6,7 +6,7 @@ Use this document when you want to prove that:
 
 - the Dagster package installs cleanly
 - unit tests cover the success and failure paths
-- the demo job behaves as expected
+- the layered lakehouse sample pipeline behaves as expected
 - the Alertmanager payload shape is correct
 - the Docker image builds locally
 - the Docker Hub release workflow is ready to publish
@@ -27,10 +27,11 @@ Run these sections in order:
 2. Static package validation
 3. Unit test validation
 4. Direct Dagster job execution
-5. Alert payload validation
-6. Container build validation
-7. Docker Hub release workflow validation
-8. Integration handoff validation for `hydrosat-infra`
+5. Raw, staging, and curated data validation
+6. Alert payload validation
+7. Container build validation
+8. Docker Hub release workflow validation
+9. Integration handoff validation for `hydrosat-infra`
 
 ## 2. Local Environment Setup
 
@@ -114,8 +115,9 @@ Sample run config:
 ```json
 {
   "ops": {
-    "extract_satellite_window": {
+    "extract_satellite_observations": {
       "config": {
+        "batch_date": "2026-04-01",
         "should_fail": false
       }
     }
@@ -127,17 +129,17 @@ Commands:
 
 ```bash
 python - <<'PY'
-from hydrosat_dagster.definitions import hydrosat_demo_job
+from hydrosat_dagster.definitions import hydrosat_lakehouse_job
 
 run_config = {
     "ops": {
-        "extract_satellite_window": {
-            "config": {"should_fail": False}
+        "extract_satellite_observations": {
+            "config": {"batch_date": "2026-04-01", "should_fail": False}
         }
     }
 }
 
-result = hydrosat_demo_job.execute_in_process(run_config=run_config, raise_on_error=False)
+result = hydrosat_lakehouse_job.execute_in_process(run_config=run_config, raise_on_error=False)
 print("success=", result.success)
 PY
 ```
@@ -145,12 +147,12 @@ PY
 Expected success:
 
 - terminal prints `success= True`
-- logs show a dummy ingest payload and simulated warehouse load
+- logs show writes to `raw`, `staging`, and `curated`
 
 Failure signs:
 
 - result is `False`
-- unexpected exception in `extract_satellite_window` or `load_into_stub_warehouse`
+- unexpected exception in extract, staging, or curated steps
 
 ### 5.2 Component: Failure Path
 
@@ -159,8 +161,9 @@ Sample run config:
 ```json
 {
   "ops": {
-    "extract_satellite_window": {
+    "extract_satellite_observations": {
       "config": {
+        "batch_date": "2026-04-01",
         "should_fail": true
       }
     }
@@ -172,17 +175,17 @@ Commands:
 
 ```bash
 python - <<'PY'
-from hydrosat_dagster.definitions import hydrosat_demo_job
+from hydrosat_dagster.definitions import hydrosat_lakehouse_job
 
 run_config = {
     "ops": {
-        "extract_satellite_window": {
-            "config": {"should_fail": True}
+        "extract_satellite_observations": {
+            "config": {"batch_date": "2026-04-01", "should_fail": True}
         }
     }
 }
 
-result = hydrosat_demo_job.execute_in_process(run_config=run_config, raise_on_error=False)
+result = hydrosat_lakehouse_job.execute_in_process(run_config=run_config, raise_on_error=False)
 print("success=", result.success)
 PY
 ```
@@ -197,23 +200,93 @@ Failure signs:
 - result is `True`
 - failure occurs for the wrong reason
 
-## 6. Alert Payload Validation
+## 6. Raw, Staging, and Curated Data Validation
 
-### 6.1 Component: Failure Message Formatter
+### 6.1 Component: Layered Output Layout
+
+Commands:
+
+```bash
+export HYDROSAT_DATA_LAKE_ROOT=/tmp/hydrosat-data-lake
+rm -rf "${HYDROSAT_DATA_LAKE_ROOT}"
+
+python - <<'PY'
+from hydrosat_dagster.definitions import hydrosat_lakehouse_job
+
+run_config = {
+    "ops": {
+        "extract_satellite_observations": {
+            "config": {"batch_date": "2026-04-01", "should_fail": False}
+        }
+    }
+}
+
+result = hydrosat_lakehouse_job.execute_in_process(run_config=run_config, raise_on_error=False)
+print("success=", result.success)
+PY
+
+find "${HYDROSAT_DATA_LAKE_ROOT}" -type f | sort
+```
+
+Expected success:
+
+- one file exists under `raw/`
+- one file exists under `staging/`
+- one file exists under `curated/`
+
+Failure signs:
+
+- missing directories
+- curated file absent on the success path
+
+### 6.2 Component: Curated Summary Content
+
+Commands:
+
+```bash
+python - <<'PY'
+from pathlib import Path
+import json
+import os
+
+root = Path(os.environ["HYDROSAT_DATA_LAKE_ROOT"])
+curated_file = next((root / "curated").rglob("*.json"))
+print(curated_file)
+print(json.dumps(json.loads(curated_file.read_text()), indent=2))
+PY
+```
+
+Expected success:
+
+- curated output contains tile summaries for `T31UFQ` and `T31UGQ`
+- each record includes:
+  - `observation_count`
+  - `avg_surface_temp_c`
+  - `max_ndvi`
+  - `quality_band_breakdown`
+
+Failure signs:
+
+- malformed JSON
+- missing aggregate fields
+
+## 7. Alert Payload Validation
+
+### 7.1 Component: Failure Message Formatter
 
 Commands:
 
 ```bash
 python - <<'PY'
 from hydrosat_dagster.definitions import build_failure_message
-print(build_failure_message("hydrosat_demo_job", "abc123", "boom"))
+print(build_failure_message("hydrosat_lakehouse_job", "abc123", "boom"))
 PY
 ```
 
 Expected success:
 
 - output includes:
-  - `job_name=hydrosat_demo_job`
+  - `job_name=hydrosat_lakehouse_job`
   - `run_id=abc123`
   - `message=boom`
 
@@ -222,7 +295,7 @@ Failure signs:
 - missing contextual fields
 - malformed string body
 
-### 6.2 Component: Alertmanager Payload Builder
+### 7.2 Component: Alertmanager Payload Builder
 
 Commands:
 
@@ -230,7 +303,7 @@ Commands:
 python - <<'PY'
 from hydrosat_dagster.definitions import build_alertmanager_payload
 import json
-payload = build_alertmanager_payload("hydrosat_demo_job", "abc123", "boom")
+payload = build_alertmanager_payload("hydrosat_lakehouse_job", "abc123", "boom")
 print(json.dumps(payload, indent=2))
 PY
 ```
@@ -241,10 +314,10 @@ Expected success:
 - labels include:
   - `alertname=DagsterJobFailed`
   - `severity=critical`
-  - `job_name=hydrosat_demo_job`
+  - `job_name=hydrosat_lakehouse_job`
   - `run_id=abc123`
 - annotations include:
-  - `summary=Dagster job failed: hydrosat_demo_job`
+  - `summary=Dagster job failed: hydrosat_lakehouse_job`
   - `description=boom`
 
 Failure signs:
@@ -252,7 +325,7 @@ Failure signs:
 - payload not JSON-serializable
 - missing labels required by Alertmanager routing
 
-### 6.3 Component: Alert Delivery Behavior When URL Is Missing
+### 7.3 Component: Alert Delivery Behavior When URL Is Missing
 
 Commands:
 
@@ -274,9 +347,9 @@ Failure signs:
 
 - import or sensor construction errors
 
-## 7. Container Build Validation
+## 8. Container Build Validation
 
-### 7.1 Component: Docker Image Build
+### 8.1 Component: Docker Image Build
 
 Commands:
 
@@ -296,7 +369,7 @@ Failure signs:
 - missing files in the image build
 - dependency installation failures inside the Docker build
 
-### 7.2 Component: Container Runtime Smoke Test
+### 8.2 Component: Container Runtime Smoke Test
 
 Commands:
 
@@ -314,19 +387,20 @@ Failure signs:
 - package import failure inside container
 - wrong working directory or missing installed package
 
-## 8. Docker Hub Release Workflow Validation
+## 9. Docker Hub Release Workflow Validation
 
-### 8.1 Component: GitHub Actions Release Workflow
+### 9.1 Component: GitHub Actions Publish Workflow
 
 File:
 
-- [release.yml](/home/branford-t-gbieor/Desktop/gbieor/applications/exercises/hydrosat/hydrosat-data/.github/workflows/release.yml)
+- [ci.yml](/home/branford-t-gbieor/Desktop/gbieor/applications/exercises/hydrosat/hydrosat-data/.github/workflows/ci.yml)
 
 Required GitHub configuration:
 
 - secret `DOCKERHUB_USERNAME`
 - secret `DOCKERHUB_TOKEN`
 - variable `DOCKERHUB_REPOSITORY`
+- secret `HYDROSAT_INFRA_REPO_TOKEN`
 
 Recommended sample value:
 
@@ -336,15 +410,14 @@ DOCKERHUB_REPOSITORY=<your-dockerhub-user>/hydrosat-dagster
 
 Trigger paths:
 
+- push to `main`
 - push a tag like `v0.1.0`
-- or run `workflow_dispatch`
 
 Expected success:
 
-- workflow checks out code
-- logs in to Docker Hub
-- builds image from `Dockerfile`
-- pushes `${DOCKERHUB_REPOSITORY}:v0.1.0` on tag push
+- `main` pushes publish `latest`
+- version tag pushes publish the same immutable tag
+- version tag pushes notify `hydrosat-infra` for promotion
 
 Failure signs:
 
@@ -352,7 +425,7 @@ Failure signs:
 - missing GitHub secret or variable
 - Docker Hub repository typo
 
-### 8.2 Component: Manual Local Docker Hub Push
+### 9.2 Component: Manual Local Docker Hub Push
 
 Commands:
 
@@ -375,11 +448,11 @@ Failure signs:
 - repository not found
 - rate limit or connectivity issues
 
-## 9. Integration Handoff to Infra
+## 10. Integration Handoff to Infra
 
-### 9.1 Component: Image Tag Handoff
+### 10.1 Component: Image Tag Handoff
 
-After publishing, copy the promoted image coordinates into `hydrosat-infra`.
+After publishing a version tag, `hydrosat-data` dispatches a promotion event and `hydrosat-infra` updates GitOps values automatically.
 
 Sample value:
 
@@ -395,6 +468,7 @@ File to update in infra:
 
 Expected success:
 
+- `hydrosat-infra` updates `helm/dagster/values-gitops.yaml`
 - Argo CD in `hydrosat-infra` can reconcile the new image tag
 
 Failure signs:
@@ -402,7 +476,7 @@ Failure signs:
 - image tag exists in Docker Hub but Kubernetes cannot pull it
 - wrong registry/repository string in infra values
 
-## 10. Completion Criteria
+## 11. Completion Criteria
 
 You can treat data-repo validation as complete when all of the following are true:
 

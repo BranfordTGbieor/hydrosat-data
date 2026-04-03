@@ -26,6 +26,22 @@ The infrastructure, Helm chart, Argo CD applications, and environment promotion 
 | `pyproject.toml` | Python package metadata |
 | `.github/workflows/ci.yml` | Application CI workflow |
 
+## Sample Pipeline
+
+The current sample project is a small lakehouse-style pipeline orchestrated by Dagster:
+
+1. Python extraction writes raw satellite observation records
+2. a staging step cleans and enriches those records
+3. a curated step produces tile-level analytical summaries
+
+The filesystem layout mirrors the intended S3 layout we will keep using later:
+
+- `raw/satellite_observations/ingest_date=YYYY-MM-DD/...`
+- `staging/satellite_observations/ingest_date=YYYY-MM-DD/...`
+- `curated/tile_summary/partition_date=YYYY-MM-DD/...`
+
+For local validation, those layers are written under `HYDROSAT_DATA_LAKE_ROOT`, which defaults to `/tmp/hydrosat-data-lake`.
+
 ## Local Development
 
 ```bash

@@ -1,11 +1,72 @@
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, date, datetime
+from pathlib import Path
+from statistics import mean
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from dagster import Definitions, Failure, RunFailureSensorContext, job, op, run_failure_sensor
+
+SAMPLE_SATELLITE_OBSERVATIONS = [
+    {
+        "scene_id": "scene-001",
+        "tile_id": "T31UFQ",
+        "captured_at": "2026-04-01T10:15:00Z",
+        "surface_temp_c": 27.4,
+        "ndvi": 0.82,
+        "cloud_cover_pct": 4.1,
+    },
+    {
+        "scene_id": "scene-002",
+        "tile_id": "T31UFQ",
+        "captured_at": "2026-04-01T10:20:00Z",
+        "surface_temp_c": 28.1,
+        "ndvi": 0.79,
+        "cloud_cover_pct": 6.5,
+    },
+    {
+        "scene_id": "scene-003",
+        "tile_id": "T31UGQ",
+        "captured_at": "2026-04-01T10:32:00Z",
+        "surface_temp_c": 24.8,
+        "ndvi": 0.88,
+        "cloud_cover_pct": 1.9,
+    },
+    {
+        "scene_id": "scene-004",
+        "tile_id": "T31UGQ",
+        "captured_at": "2026-04-01T10:37:00Z",
+        "surface_temp_c": 25.6,
+        "ndvi": 0.86,
+        "cloud_cover_pct": 2.3,
+    },
+]
+
+
+def _lake_root() -> Path:
+    """Use a local filesystem root that mirrors the intended S3 raw/staging/curated layout."""
+    return Path(os.getenv("HYDROSAT_DATA_LAKE_ROOT", "/tmp/hydrosat-data-lake"))
+
+
+def _partition_date(value: str | None) -> str:
+    if value:
+        date.fromisoformat(value)
+        return value
+    return date.today().isoformat()
+
+
+def _jsonl_write(path: Path, records: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record) + "\n")
+
+
+def _jsonl_read(path: Path) -> list[dict]:
+    with path.open(encoding="utf-8") as handle:
+        return [json.loads(line) for line in handle if line.strip()]
 
 
 def build_failure_message(job_name: str, run_id: str, failure_message: str) -> str:
@@ -14,14 +75,14 @@ def build_failure_message(job_name: str, run_id: str, failure_message: str) -> s
         f"Dagster job failure detected.\n"
         f"job_name={job_name}\n"
         f"run_id={run_id}\n"
-        f"failed_at_utc={datetime.now(timezone.utc).isoformat()}\n"
+        f"failed_at_utc={datetime.now(UTC).isoformat()}\n"
         f"message={failure_message}"
     )
 
 
 def build_alertmanager_payload(job_name: str, run_id: str, failure_message: str) -> list[dict]:
     """Build the minimal Alertmanager v2 payload for a failed Dagster run."""
-    failed_at = datetime.now(timezone.utc).isoformat()
+    failed_at = datetime.now(UTC).isoformat()
     return [
         {
             "labels": {
@@ -41,33 +102,131 @@ def build_alertmanager_payload(job_name: str, run_id: str, failure_message: str)
     ]
 
 
-@op(config_schema={"should_fail": bool})
-def extract_satellite_window(context):
-    """Create a small synthetic payload so the demo job is easy to validate end to end."""
-    payload = {
-        "batch_id": str(uuid4()),
-        "window_start": datetime.now(timezone.utc).isoformat(),
+@op(config_schema={"batch_date": str, "should_fail": bool})
+def extract_satellite_observations(context) -> dict:
+    """Simulate a Python-driven extract into the raw layer."""
+    partition_date = _partition_date(context.op_config["batch_date"])
+    batch_id = str(uuid4())
+    raw_path = _lake_root() / "raw" / "satellite_observations" / f"ingest_date={partition_date}" / f"{batch_id}.jsonl"
+
+    raw_records = []
+    for record in SAMPLE_SATELLITE_OBSERVATIONS:
+        raw_record = {
+            "batch_id": batch_id,
+            "ingested_at": datetime.now(UTC).isoformat(),
+            "record_source": "sample_satellite_feed",
+            "should_fail": context.op_config["should_fail"],
+            **record,
+        }
+        raw_records.append(raw_record)
+
+    _jsonl_write(raw_path, raw_records)
+    context.log.info("Wrote %s raw observations to %s", len(raw_records), raw_path)
+
+    return {
+        "batch_id": batch_id,
+        "partition_date": partition_date,
+        "record_count": len(raw_records),
+        "raw_path": str(raw_path),
         "should_fail": context.op_config["should_fail"],
     }
-    context.log.info("Prepared dummy ingest payload: %s", json.dumps(payload))
-    return payload
 
 
 @op
-def load_into_stub_warehouse(context, payload):
-    """Simulate the load step and allow intentional failure for alert-path verification."""
-    if payload["should_fail"]:
+def stage_satellite_observations(context, raw_batch: dict) -> dict:
+    """Clean and enrich raw records into a staging-friendly shape."""
+    raw_records = _jsonl_read(Path(raw_batch["raw_path"]))
+    staged_path = (
+        _lake_root()
+        / "staging"
+        / "satellite_observations"
+        / f"ingest_date={raw_batch['partition_date']}"
+        / f"{raw_batch['batch_id']}.jsonl"
+    )
+
+    staged_records = []
+    for record in raw_records:
+        staged_records.append(
+            {
+                "batch_id": record["batch_id"],
+                "partition_date": raw_batch["partition_date"],
+                "scene_id": record["scene_id"],
+                "tile_id": record["tile_id"],
+                "captured_at": record["captured_at"],
+                "surface_temp_c": round(float(record["surface_temp_c"]), 2),
+                "ndvi": round(float(record["ndvi"]), 3),
+                "cloud_cover_pct": round(float(record["cloud_cover_pct"]), 2),
+                "quality_band": "high" if float(record["cloud_cover_pct"]) < 5 else "moderate",
+                "vegetation_band": "dense" if float(record["ndvi"]) >= 0.8 else "medium",
+                "should_fail": record["should_fail"],
+            }
+        )
+
+    _jsonl_write(staged_path, staged_records)
+    context.log.info("Wrote %s staged observations to %s", len(staged_records), staged_path)
+
+    return {
+        "batch_id": raw_batch["batch_id"],
+        "partition_date": raw_batch["partition_date"],
+        "record_count": len(staged_records),
+        "staged_path": str(staged_path),
+        "should_fail": raw_batch["should_fail"],
+    }
+
+
+@op
+def curate_tile_summary(context, staged_batch: dict) -> dict:
+    """Aggregate staged records into a curated tile-level summary."""
+    staged_records = _jsonl_read(Path(staged_batch["staged_path"]))
+    if staged_batch["should_fail"]:
         raise Failure("Intentional failure to validate run-failure alerting.")
 
-    context.log.info("Simulated successful warehouse load for batch %s", payload["batch_id"])
+    by_tile: dict[str, list[dict]] = {}
+    for record in staged_records:
+        by_tile.setdefault(record["tile_id"], []).append(record)
+
+    curated_records = []
+    for tile_id, records in sorted(by_tile.items()):
+        curated_records.append(
+            {
+                "batch_id": staged_batch["batch_id"],
+                "partition_date": staged_batch["partition_date"],
+                "tile_id": tile_id,
+                "observation_count": len(records),
+                "avg_surface_temp_c": round(mean(record["surface_temp_c"] for record in records), 2),
+                "max_ndvi": max(record["ndvi"] for record in records),
+                "quality_band_breakdown": {
+                    band: sum(1 for record in records if record["quality_band"] == band)
+                    for band in sorted({record["quality_band"] for record in records})
+                },
+            }
+        )
+
+    curated_path = (
+        _lake_root()
+        / "curated"
+        / "tile_summary"
+        / f"partition_date={staged_batch['partition_date']}"
+        / f"{staged_batch['batch_id']}.json"
+    )
+    curated_path.parent.mkdir(parents=True, exist_ok=True)
+    curated_path.write_text(json.dumps(curated_records, indent=2), encoding="utf-8")
+    context.log.info("Wrote %s curated tile summaries to %s", len(curated_records), curated_path)
+
+    return {
+        "batch_id": staged_batch["batch_id"],
+        "partition_date": staged_batch["partition_date"],
+        "curated_path": str(curated_path),
+        "tile_count": len(curated_records),
+    }
 
 
 @job
-def hydrosat_demo_job():
-    load_into_stub_warehouse(extract_satellite_window())
+def hydrosat_lakehouse_job():
+    curate_tile_summary(stage_satellite_observations(extract_satellite_observations()))
 
 
-@run_failure_sensor(name="alertmanager_job_failure_alert", monitored_jobs=[hydrosat_demo_job], minimum_interval_seconds=30)
+@run_failure_sensor(name="alertmanager_job_failure_alert", monitored_jobs=[hydrosat_lakehouse_job], minimum_interval_seconds=30)
 def alertmanager_job_failure_alert(context: RunFailureSensorContext):
     """Forward Dagster job failures to Alertmanager so alert routing stays centralized."""
     alertmanager_url = os.getenv("ALERTMANAGER_URL", "")
@@ -91,7 +250,6 @@ def alertmanager_job_failure_alert(context: RunFailureSensorContext):
     )
 
     try:
-        # Dagster sensors should fail loudly here so broken alert delivery is visible in the run context.
         with urlopen(request, timeout=10) as response:
             if response.status >= 300:
                 raise Failure(f"Alertmanager returned unexpected status code {response.status}")
@@ -102,6 +260,6 @@ def alertmanager_job_failure_alert(context: RunFailureSensorContext):
 
 
 defs = Definitions(
-    jobs=[hydrosat_demo_job],
+    jobs=[hydrosat_lakehouse_job],
     sensors=[alertmanager_job_failure_alert],
 )
