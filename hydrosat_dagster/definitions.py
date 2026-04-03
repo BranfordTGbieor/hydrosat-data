@@ -1,8 +1,8 @@
 import json
 import os
+import subprocess
 from datetime import UTC, date, datetime
 from pathlib import Path
-from statistics import mean
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
@@ -46,6 +46,10 @@ SAMPLE_SATELLITE_OBSERVATIONS = [
 ]
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
 def _lake_root() -> Path:
     """Use a local filesystem root that mirrors the intended S3 raw/staging/curated layout."""
     return Path(os.getenv("HYDROSAT_DATA_LAKE_ROOT", "/tmp/hydrosat-data-lake"))
@@ -57,6 +61,17 @@ def _lake_bucket() -> str:
 
 def _lake_prefix() -> str:
     return os.getenv("HYDROSAT_DATA_LAKE_PREFIX", "hydrosat").strip("/")
+
+
+def _dbt_project_dir() -> Path:
+    return _repo_root() / "dbt"
+
+
+def _dbt_duckdb_path() -> Path:
+    override = os.getenv("HYDROSAT_DBT_DUCKDB_PATH", "")
+    if override:
+        return Path(override)
+    return _lake_root() / "_dbt" / "hydrosat.duckdb"
 
 
 def _partition_date(value: str | None) -> str:
@@ -114,6 +129,25 @@ def _jsonl_write(uri: str, records: list[dict]) -> None:
 
 def _jsonl_read(uri: str) -> list[dict]:
     return [json.loads(line) for line in _read_text(uri).splitlines() if line.strip()]
+
+
+def _json_read(uri: str) -> list[dict]:
+    return json.loads(_read_text(uri))
+
+
+def _run_dbt_command(command: list[str], env: dict[str, str]) -> None:
+    process = subprocess.run(
+        command,
+        cwd=_dbt_project_dir(),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if process.returncode != 0:
+        raise Failure(
+            f"dbt command failed: {' '.join(command)}\nstdout:\n{process.stdout}\nstderr:\n{process.stderr}"
+        )
 
 
 def build_failure_message(job_name: str, run_id: str, failure_message: str) -> str:
@@ -180,94 +214,60 @@ def extract_satellite_observations(context) -> dict:
 
 
 @op
-def stage_satellite_observations(context, raw_batch: dict) -> dict:
-    """Clean and enrich raw records into a staging-friendly shape."""
-    raw_records = _jsonl_read(raw_batch["raw_path"])
+def transform_with_dbt(context, raw_batch: dict) -> dict:
+    """Run dbt transforms for staging and curated layers, then export results back into the lake layout."""
     staged_path = _lake_uri(
         "staging",
         "satellite_observations",
         f"ingest_date={raw_batch['partition_date']}",
         f"{raw_batch['batch_id']}.jsonl",
     )
+    curated_path = _lake_uri(
+        "curated",
+        "tile_summary",
+        f"partition_date={raw_batch['partition_date']}",
+        f"{raw_batch['batch_id']}.json",
+    )
 
-    staged_records = []
-    for record in raw_records:
-        staged_records.append(
-            {
-                "batch_id": record["batch_id"],
-                "partition_date": raw_batch["partition_date"],
-                "scene_id": record["scene_id"],
-                "tile_id": record["tile_id"],
-                "captured_at": record["captured_at"],
-                "surface_temp_c": round(float(record["surface_temp_c"]), 2),
-                "ndvi": round(float(record["ndvi"]), 3),
-                "cloud_cover_pct": round(float(record["cloud_cover_pct"]), 2),
-                "quality_band": "high" if float(record["cloud_cover_pct"]) < 5 else "moderate",
-                "vegetation_band": "dense" if float(record["ndvi"]) >= 0.8 else "medium",
-                "should_fail": record["should_fail"],
-            }
-        )
+    duckdb_path = _dbt_duckdb_path()
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
 
-    _jsonl_write(staged_path, staged_records)
-    context.log.info("Wrote %s staged observations to %s", len(staged_records), staged_path)
+    env = {
+        **os.environ,
+        "HYDROSAT_RAW_URI": raw_batch["raw_path"],
+        "HYDROSAT_STAGING_URI": staged_path,
+        "HYDROSAT_CURATED_URI": curated_path,
+        "HYDROSAT_BATCH_DATE": raw_batch["partition_date"],
+        "HYDROSAT_DUCKDB_PATH": str(duckdb_path),
+    }
+
+    _run_dbt_command(["dbt", "build", "--project-dir", str(_dbt_project_dir()), "--profiles-dir", str(_dbt_project_dir()), "--target", "hydrosat"], env)
+    _run_dbt_command(
+        ["dbt", "run-operation", "export_lake_outputs", "--project-dir", str(_dbt_project_dir()), "--profiles-dir", str(_dbt_project_dir()), "--target", "hydrosat"],
+        env,
+    )
+
+    if raw_batch["should_fail"]:
+        raise Failure("Intentional failure to validate run-failure alerting.")
+
+    staged_records = _jsonl_read(staged_path)
+    curated_records = _json_read(curated_path)
+    context.log.info("dbt exported %s staged observations to %s", len(staged_records), staged_path)
+    context.log.info("dbt exported %s curated tile summaries to %s", len(curated_records), curated_path)
 
     return {
         "batch_id": raw_batch["batch_id"],
         "partition_date": raw_batch["partition_date"],
-        "record_count": len(staged_records),
-        "staged_path": str(staged_path),
-        "should_fail": raw_batch["should_fail"],
-    }
-
-
-@op
-def curate_tile_summary(context, staged_batch: dict) -> dict:
-    """Aggregate staged records into a curated tile-level summary."""
-    staged_records = _jsonl_read(staged_batch["staged_path"])
-    if staged_batch["should_fail"]:
-        raise Failure("Intentional failure to validate run-failure alerting.")
-
-    by_tile: dict[str, list[dict]] = {}
-    for record in staged_records:
-        by_tile.setdefault(record["tile_id"], []).append(record)
-
-    curated_records = []
-    for tile_id, records in sorted(by_tile.items()):
-        curated_records.append(
-            {
-                "batch_id": staged_batch["batch_id"],
-                "partition_date": staged_batch["partition_date"],
-                "tile_id": tile_id,
-                "observation_count": len(records),
-                "avg_surface_temp_c": round(mean(record["surface_temp_c"] for record in records), 2),
-                "max_ndvi": max(record["ndvi"] for record in records),
-                "quality_band_breakdown": {
-                    band: sum(1 for record in records if record["quality_band"] == band)
-                    for band in sorted({record["quality_band"] for record in records})
-                },
-            }
-        )
-
-    curated_path = _lake_uri(
-        "curated",
-        "tile_summary",
-        f"partition_date={staged_batch['partition_date']}",
-        f"{staged_batch['batch_id']}.json",
-    )
-    _write_text(curated_path, json.dumps(curated_records, indent=2), "application/json")
-    context.log.info("Wrote %s curated tile summaries to %s", len(curated_records), curated_path)
-
-    return {
-        "batch_id": staged_batch["batch_id"],
-        "partition_date": staged_batch["partition_date"],
-        "curated_path": str(curated_path),
+        "staged_path": staged_path,
+        "curated_path": curated_path,
+        "staged_record_count": len(staged_records),
         "tile_count": len(curated_records),
     }
 
 
 @job
 def hydrosat_lakehouse_job():
-    curate_tile_summary(stage_satellite_observations(extract_satellite_observations()))
+    transform_with_dbt(extract_satellite_observations())
 
 
 @run_failure_sensor(name="alertmanager_job_failure_alert", monitored_jobs=[hydrosat_lakehouse_job], minimum_interval_seconds=30)

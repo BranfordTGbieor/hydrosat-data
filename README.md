@@ -31,8 +31,8 @@ The infrastructure, Helm chart, Argo CD applications, and environment promotion 
 The current sample project is a small lakehouse-style pipeline orchestrated by Dagster:
 
 1. Python extraction writes raw satellite observation records
-2. a staging step cleans and enriches those records
-3. a curated step produces tile-level analytical summaries
+2. dbt transforms clean and enrich those records into `staging`
+3. dbt produces curated tile-level analytical summaries in `curated`
 
 The filesystem layout mirrors the intended S3 layout we will keep using later:
 
@@ -68,6 +68,12 @@ Storage modes:
 - local development uses `HYDROSAT_DATA_LAKE_ROOT`
 - cluster execution uses `HYDROSAT_DATA_LAKE_BUCKET`
 - both modes preserve the same raw, staging, and curated layer layout
+
+dbt execution model:
+
+- Dagster writes `raw`
+- Dagster invokes the bundled dbt project with `dbt-duckdb`
+- dbt reads `raw`, materializes transformations in DuckDB, and exports `staging` and `curated` back into the lake layout
 
 ## Local Development
 

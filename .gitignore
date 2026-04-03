@@ -15,3 +15,5 @@ build/
 Thumbs.db
 .idea/
 .vscode/
+dbt/target/
+dbt/logs/

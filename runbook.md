@@ -8,6 +8,7 @@ Use this document when you want to prove that:
 - unit tests cover the success and failure paths
 - the layered lakehouse sample pipeline behaves as expected
 - the pipeline can target local storage now and an S3-backed lake in-cluster later
+- dbt is responsible for the staging and curated transforms
 - the Alertmanager payload shape is correct
 - the Docker image builds locally
 - the Docker Hub release workflow is ready to publish
@@ -29,11 +30,12 @@ Run these sections in order:
 3. Unit test validation
 4. Direct Dagster job execution
 5. Raw, staging, and curated data validation
-6. Alert payload validation
-7. Container build validation
-8. Docker Hub release workflow validation
-9. Integration handoff validation for `hydrosat-infra`
-10. S3-backed runtime validation
+6. dbt project validation
+7. Alert payload validation
+8. Container build validation
+9. Docker Hub release workflow validation
+10. Integration handoff validation for `hydrosat-infra`
+11. S3-backed runtime validation
 
 ## 2. Local Environment Setup
 
@@ -149,7 +151,7 @@ PY
 Expected success:
 
 - terminal prints `success= True`
-- logs show writes to `raw`, `staging`, and `curated`
+- logs show writes to `raw`, plus dbt-driven exports into `staging` and `curated`
 
 Failure signs:
 
@@ -296,9 +298,60 @@ Failure signs:
 - bucket expected in-cluster but unset
 - prefix not aligned with the expected raw/staging/curated layout
 
-## 7. Alert Payload Validation
+## 7. dbt Project Validation
 
-### 7.1 Component: Failure Message Formatter
+### 7.1 Component: dbt Project Layout
+
+Files:
+
+- `dbt/dbt_project.yml`
+- `dbt/profiles.yml`
+- `dbt/models/staging/stg_satellite_observations.sql`
+- `dbt/models/curated/cur_satellite_tile_summary.sql`
+- `dbt/macros/export_lake_outputs.sql`
+
+Commands:
+
+```bash
+find dbt -maxdepth 3 -type f | sort
+```
+
+Expected success:
+
+- the dbt project contains project config, profile config, staging model, curated model, and export macro
+
+Failure signs:
+
+- missing model files
+- missing `profiles.yml`
+
+### 7.2 Component: dbt Environment Surface
+
+Commands:
+
+```bash
+python - <<'PY'
+import os
+print("HYDROSAT_RAW_URI=", os.getenv("HYDROSAT_RAW_URI", "set-by-dagster"))
+print("HYDROSAT_STAGING_URI=", os.getenv("HYDROSAT_STAGING_URI", "set-by-dagster"))
+print("HYDROSAT_CURATED_URI=", os.getenv("HYDROSAT_CURATED_URI", "set-by-dagster"))
+print("HYDROSAT_DUCKDB_PATH=", os.getenv("HYDROSAT_DUCKDB_PATH", "/tmp/hydrosat-data-lake/_dbt/hydrosat.duckdb"))
+PY
+```
+
+Expected success:
+
+- Dagster sets these values before invoking dbt
+- DuckDB path points at a writable local path
+
+Failure signs:
+
+- dbt receives no raw/staging/curated URIs
+- DuckDB path points at a non-writable location
+
+## 8. Alert Payload Validation
+
+### 8.1 Component: Failure Message Formatter
 
 Commands:
 
@@ -321,7 +374,7 @@ Failure signs:
 - missing contextual fields
 - malformed string body
 
-### 7.2 Component: Alertmanager Payload Builder
+### 8.2 Component: Alertmanager Payload Builder
 
 Commands:
 
@@ -351,7 +404,7 @@ Failure signs:
 - payload not JSON-serializable
 - missing labels required by Alertmanager routing
 
-### 7.3 Component: Alert Delivery Behavior When URL Is Missing
+### 8.3 Component: Alert Delivery Behavior When URL Is Missing
 
 Commands:
 
@@ -373,9 +426,9 @@ Failure signs:
 
 - import or sensor construction errors
 
-## 8. Container Build Validation
+## 9. Container Build Validation
 
-### 8.1 Component: Docker Image Build
+### 9.1 Component: Docker Image Build
 
 Commands:
 
@@ -395,7 +448,7 @@ Failure signs:
 - missing files in the image build
 - dependency installation failures inside the Docker build
 
-### 8.2 Component: Container Runtime Smoke Test
+### 9.2 Component: Container Runtime Smoke Test
 
 Commands:
 
@@ -413,9 +466,9 @@ Failure signs:
 - package import failure inside container
 - wrong working directory or missing installed package
 
-## 9. Docker Hub Release Workflow Validation
+## 10. Docker Hub Release Workflow Validation
 
-### 9.1 Component: GitHub Actions Publish Workflow
+### 10.1 Component: GitHub Actions Publish Workflow
 
 File:
 
@@ -451,7 +504,7 @@ Failure signs:
 - missing GitHub secret or variable
 - Docker Hub repository typo
 
-### 9.2 Component: Manual Local Docker Hub Push
+### 10.2 Component: Manual Local Docker Hub Push
 
 Commands:
 
@@ -474,9 +527,9 @@ Failure signs:
 - repository not found
 - rate limit or connectivity issues
 
-## 10. Integration Handoff to Infra
+## 11. Integration Handoff to Infra
 
-### 10.1 Component: Image Tag Handoff
+### 11.1 Component: Image Tag Handoff
 
 After publishing a version tag, `hydrosat-data` dispatches a promotion event and `hydrosat-infra` updates GitOps values automatically.
 
@@ -502,9 +555,9 @@ Failure signs:
 - image tag exists in Docker Hub but Kubernetes cannot pull it
 - wrong registry/repository string in infra values
 
-## 11. S3-Backed Runtime Validation
+## 12. S3-Backed Runtime Validation
 
-### 11.1 Component: Bucket-Backed Lake Layout
+### 12.1 Component: Bucket-Backed Lake Layout
 
 This requires the S3 bucket and Dagster IRSA role from `hydrosat-infra`.
 
@@ -531,13 +584,14 @@ Failure signs:
 - bucket not found
 - wrong service account IAM role in-cluster
 
-## 12. Completion Criteria
+## 13. Completion Criteria
 
 You can treat data-repo validation as complete when all of the following are true:
 
 - package installs successfully
 - compile and test steps pass locally
 - the layered lakehouse job succeeds on the success path and fails on the intentional failure path
+- dbt project files and environment wiring are valid
 - Alertmanager payload shape is correct
 - Docker image builds locally
 - Docker Hub push works manually or via GitHub Actions

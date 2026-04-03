@@ -1,0 +1,19 @@
+name: hydrosat_lakehouse
+version: "1.0"
+config-version: 2
+
+profile: hydrosat_lakehouse
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "logs"
+
+models:
+  hydrosat_lakehouse:
+    staging:
+      +materialized: view
+    curated:
+      +materialized: table
