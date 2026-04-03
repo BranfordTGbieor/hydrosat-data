@@ -41,17 +41,17 @@ pytest
 docker build -t hydrosat-dagster:local .
 ```
 
-## Release Direction
+## Image Publishing
 
-The repository now includes a Docker Hub release workflow skeleton. To make it fully operational, configure:
+Image publishing is handled directly in the application CI workflow. Configure:
 
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
 - `DOCKERHUB_REPOSITORY`
 
-Release flow:
+Publish flow:
 
-1. builds the image
-2. tags it for Docker Hub
-3. pushes it to the configured Docker Hub repository
-4. hands the promoted image tag to the separate infra repo for GitOps rollout
+1. pushes from `main` publish `latest`
+2. pushes of tags like `v0.1.0` publish immutable version tags
+3. pull requests and non-release branches still build the image but do not push it
+4. the promoted image tag is then handed to the separate infra repo for GitOps rollout
