@@ -4,7 +4,7 @@ hydrosat_lakehouse:
     hydrosat:
       type: duckdb
       path: "{{ env_var('HYDROSAT_DUCKDB_PATH', '/tmp/hydrosat-data-lake/_dbt/hydrosat.duckdb') }}"
-      threads: 4
+      threads: 1
       extensions:
         - httpfs
         - parquet

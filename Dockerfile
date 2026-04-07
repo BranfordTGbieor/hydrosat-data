@@ -13,6 +13,8 @@ RUN pip install --no-cache-dir .
 RUN addgroup --system dagster \
     && adduser --system --uid 10001 --ingroup dagster dagster \
     && mkdir -p "${DAGSTER_HOME}" "${HOME}" "${XDG_CACHE_HOME}" \
+    && python -c "import duckdb; con = duckdb.connect('/tmp/hydrosat-bootstrap.duckdb'); [con.install_extension(ext) or con.load_extension(ext) for ext in ('httpfs', 'parquet', 'json')]; con.close()" \
+    && rm -f /tmp/hydrosat-bootstrap.duckdb \
     && chown -R dagster:dagster /opt/dagster
 
 USER dagster

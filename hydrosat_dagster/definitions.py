@@ -99,6 +99,13 @@ def _runtime_home_dir() -> Path:
     return Path("/tmp/hydrosat-home")
 
 
+def _dbt_command_timeout_seconds() -> int:
+    override = os.getenv("HYDROSAT_DBT_TIMEOUT_SECONDS", "").strip()
+    if override:
+        return int(override)
+    return 180
+
+
 def _partition_date(value: str | None) -> str:
     if value:
         date.fromisoformat(value)
@@ -187,14 +194,24 @@ def _ensure_local_parent_dir(uri: str) -> None:
 
 
 def _run_dbt_command(command: list[str], env: dict[str, str]) -> None:
-    process = subprocess.run(
-        command,
-        cwd=_dbt_project_dir(),
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    timeout_seconds = _dbt_command_timeout_seconds()
+    try:
+        process = subprocess.run(
+            command,
+            cwd=_dbt_project_dir(),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise Failure(
+            f"dbt command timed out after {timeout_seconds} seconds: {' '.join(command)}\n"
+            f"stdout:\n{exc.stdout or ''}\n"
+            f"stderr:\n{exc.stderr or ''}"
+        ) from exc
+
     if process.returncode != 0:
         raise Failure(
             f"dbt command failed: {' '.join(command)}\nstdout:\n{process.stdout}\nstderr:\n{process.stderr}"
