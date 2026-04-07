@@ -384,14 +384,15 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
         env,
     )
 
-    if raw_batch["should_fail"]:
-        raise Failure("Intentional failure to validate run-failure alerting.")
-
     _publish_local_copy(staged_work_path, staged_path, "application/x-ndjson")
     _publish_local_copy(curated_work_path, curated_path, "application/json")
 
     staged_records = _jsonl_read(str(staged_work_path))
     curated_records = _json_read(str(curated_work_path))
+
+    if raw_batch["should_fail"]:
+        raise Failure("Intentional failure to validate run-failure alerting.")
+
     context.log.info("dbt exported %s staged observations to %s", len(staged_records), staged_path)
     context.log.info("dbt exported %s curated tile summaries to %s", len(curated_records), curated_path)
 
