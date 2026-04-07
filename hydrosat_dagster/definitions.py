@@ -87,6 +87,18 @@ def _dbt_duckdb_path() -> Path:
     return _lake_root() / "_dbt" / "hydrosat.duckdb"
 
 
+def _runtime_home_dir() -> Path:
+    override = os.getenv("HYDROSAT_RUNTIME_HOME", "").strip()
+    if override:
+        return Path(override)
+
+    dagster_home = os.getenv("DAGSTER_HOME", "").strip()
+    if dagster_home:
+        return Path(dagster_home).parent
+
+    return Path("/tmp/hydrosat-home")
+
+
 def _partition_date(value: str | None) -> str:
     if value:
         date.fromisoformat(value)
@@ -298,6 +310,12 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
         "HYDROSAT_BATCH_DATE": raw_batch["partition_date"],
         "HYDROSAT_DUCKDB_PATH": str(duckdb_path),
     }
+    runtime_home = _runtime_home_dir()
+    runtime_home.mkdir(parents=True, exist_ok=True)
+    cache_dir = runtime_home / ".cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    env["HOME"] = str(runtime_home)
+    env["XDG_CACHE_HOME"] = str(cache_dir)
 
     _run_dbt_command(
         _dbt_cli_command(
