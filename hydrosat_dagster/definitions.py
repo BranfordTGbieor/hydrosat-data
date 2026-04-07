@@ -193,6 +193,19 @@ def _ensure_local_parent_dir(uri: str) -> None:
     Path(uri).parent.mkdir(parents=True, exist_ok=True)
 
 
+def _dbt_work_dir(batch_id: str, partition_date: str) -> Path:
+    return _runtime_home_dir() / "dbt-work" / partition_date / batch_id
+
+
+def _stage_local_copy(source_uri: str, destination_path: Path, content_type: str) -> str:
+    _write_text(str(destination_path), _read_text(source_uri), content_type)
+    return str(destination_path)
+
+
+def _publish_local_copy(source_path: Path, destination_uri: str, content_type: str) -> None:
+    _write_text(destination_uri, source_path.read_text(encoding="utf-8"), content_type)
+
+
 def _run_dbt_command(command: list[str], env: dict[str, str]) -> None:
     timeout_seconds = _dbt_command_timeout_seconds()
     try:
@@ -314,6 +327,17 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
         f"{raw_batch['batch_id']}.json",
     )
 
+    work_dir = _dbt_work_dir(raw_batch["batch_id"], raw_batch["partition_date"])
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    raw_work_path = work_dir / "raw.jsonl"
+    staged_work_path = work_dir / "staging.jsonl"
+    curated_work_path = work_dir / "curated.json"
+
+    dbt_raw_uri = _stage_local_copy(raw_batch["raw_path"], raw_work_path, "application/x-ndjson")
+    dbt_staging_uri = str(staged_work_path)
+    dbt_curated_uri = str(curated_work_path)
+
     duckdb_path = _dbt_duckdb_path()
     duckdb_path.parent.mkdir(parents=True, exist_ok=True)
     _ensure_local_parent_dir(staged_path)
@@ -321,9 +345,9 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
 
     env = {
         **os.environ,
-        "HYDROSAT_RAW_URI": raw_batch["raw_path"],
-        "HYDROSAT_STAGING_URI": staged_path,
-        "HYDROSAT_CURATED_URI": curated_path,
+        "HYDROSAT_RAW_URI": dbt_raw_uri,
+        "HYDROSAT_STAGING_URI": dbt_staging_uri,
+        "HYDROSAT_CURATED_URI": dbt_curated_uri,
         "HYDROSAT_BATCH_DATE": raw_batch["partition_date"],
         "HYDROSAT_DUCKDB_PATH": str(duckdb_path),
     }
@@ -363,8 +387,11 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
     if raw_batch["should_fail"]:
         raise Failure("Intentional failure to validate run-failure alerting.")
 
-    staged_records = _jsonl_read(staged_path)
-    curated_records = _json_read(curated_path)
+    _publish_local_copy(staged_work_path, staged_path, "application/x-ndjson")
+    _publish_local_copy(curated_work_path, curated_path, "application/json")
+
+    staged_records = _jsonl_read(str(staged_work_path))
+    curated_records = _json_read(str(curated_work_path))
     context.log.info("dbt exported %s staged observations to %s", len(staged_records), staged_path)
     context.log.info("dbt exported %s curated tile summaries to %s", len(curated_records), curated_path)
 
