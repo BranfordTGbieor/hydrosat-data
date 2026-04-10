@@ -1,42 +1,33 @@
 ---
 config:
-  layout: elk
+  layout: dagre
   look: neo
   theme: redux
 ---
-
 flowchart LR
-
-  Feed["🛰️ Sample Satellite Feed<br/>Synthetic observation input"]
-
-  subgraph AWS["☁️ AWS Data Platform"]
-    direction LR
-
-    subgraph EKS["☸️ Amazon EKS<br/>Dagster runtime"]
-      direction TB
-      Schedule["🕒 Schedule / Sensors<br/>Automated trigger and recovery"]
-      Dagster["⚙️ Dagster<br/>Pipeline orchestration"]
-      Extract["🐍 Python Extract<br/>Writes raw observation data"]
-      Transform["🔄 dbt + DuckDB<br/>Builds downstream layers"]
-
-      Schedule --> Dagster
-    end
-
-    subgraph Lakehouse["🪣 S3 Lakehouse Storage"]
-      direction LR
-      Raw["🗂️ Raw Layer<br/>Initial ingest data"]
-      Staging["🧱 Staging Layer<br/>Intermediate transformed data"]
-      Curated["✅ Curated Layer<br/>Reporting-ready output"]
-    end
+ subgraph EKS["☸️ Amazon EKS<br>Dagster runtime"]
+    direction TB
+        Schedule["🕒 Schedule / Sensors<br>Automated trigger and recovery"]
+        Dagster["⚙️ Dagster<br>Pipeline orchestration"]
+        Extract["🐍 Python Extract<br>Writes raw observation data"]
+        Transform["🔄 dbt + DuckDB<br>Builds downstream layers"]
   end
-
-  Alerting["🚨 Alerting<br/>Pipeline failure notifications"]
-
-  Feed --> Extract
-  Dagster --> Extract
-  Extract --> Raw
-  Raw --> Transform
-  Dagster --> Transform
-  Transform --> Staging
-  Transform --> Curated
-  Dagster --> Alerting
+ subgraph Lakehouse["🪣 S3 Lakehouse Storage"]
+    direction TB
+        Raw["🗂️ Raw Layer<br>Initial ingest data"]
+        Staging["🧱 Staging Layer<br>Intermediate transformed data"]
+        Curated["✅ Curated Layer<br>Reporting-ready output"]
+  end
+ subgraph AWS["☁️ AWS Data Platform"]
+    direction TB
+        EKS
+        Lakehouse
+  end
+    Schedule --> Dagster
+    Dagster --> Extract & Transform
+    Feed["🛰️ Sample Satellite Feed<br>Synthetic observation input"] --> Extract
+    Extract --> Raw
+    Raw --> Staging
+    Staging --> Curated
+    Transform --> Staging & Curated
+    Dagster -.-> Alerting["🚨 Grafana Cloud Alerting<br>Pipeline failure notifications"]
