@@ -57,7 +57,7 @@ flowchart LR
   Staging --> Curate[Curated Aggregate]
   Curate --> Curated[Curated Layer]
   Curate --> Dagster[Dagster Job]
-  Dagster --> Alertmanager[Alertmanager]
+  Dagster --> Failure[Failure Signal]
 
   subgraph Storage
     Raw
@@ -83,7 +83,7 @@ Operational behavior:
 - `daily_lakehouse_schedule` runs the pipeline at `03:00 UTC`
 - `lakehouse_partition_recovery_sensor` checks whether `curated/tile_summary/partition_date=<today>/` already exists
 - the recovery sensor only requests a run when the expected curated partition is absent
-- `alertmanager_job_failure_alert` remains the failure-notification path for run failures
+- the code location still includes an optional Alertmanager-compatible failure sensor, but the default deployed alerting path for this exercise is Grafana Cloud alerting managed from `hydrosat-infra`
 
 ## Local Development
 
@@ -94,6 +94,20 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 python -m pytest
 ```
+
+## Running the Sample Job
+
+Minimal local run config:
+
+```yaml
+ops:
+  extract_satellite_observations:
+    config:
+      batch_date: "2026-04-07"
+      should_fail: false
+```
+
+Use `should_fail: true` to simulate a controlled Dagster job failure for observability and alert-validation work.
 
 ## Container Build
 

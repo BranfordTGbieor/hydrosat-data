@@ -10,7 +10,7 @@ Use this document when you want to prove that:
 - the pipeline can target local storage now and an S3-backed lake in-cluster later
 - dbt is responsible for the staging and curated transforms
 - the daily schedule and recovery sensor behave as expected
-- the Alertmanager payload shape is correct
+- the optional Alertmanager compatibility payload shape is correct
 - the Docker image builds locally
 - the Docker Hub release workflow is ready to publish
 - the built image can be consumed by `hydrosat-infra`
@@ -33,7 +33,7 @@ Run these sections in order:
 5. Schedule and recovery sensor validation
 6. Raw, staging, and curated data validation
 7. dbt project validation
-8. Alert payload validation
+8. Optional Alertmanager compatibility validation
 9. Container build validation
 10. Docker Hub release workflow validation
 11. Integration handoff validation for `hydrosat-infra`
@@ -106,7 +106,7 @@ Expected success:
 - failure-path test confirms `hydrosat_lakehouse_job` returns `success=False`
 - schedule test confirms the current UTC partition is injected into run config
 - recovery-sensor tests confirm a missing curated partition yields a `RunRequest` and an existing partition yields a `SkipReason`
-- payload-format tests confirm the Alertmanager body contains the expected labels and annotations
+- payload-format tests confirm the optional Alertmanager compatibility body contains the expected labels and annotations
 
 Failure signs:
 
@@ -437,7 +437,7 @@ Failure signs:
 - dbt receives no raw/staging/curated URIs
 - DuckDB path points at a non-writable location
 
-## 9. Alert Payload Validation
+## 9. Optional Alertmanager Compatibility Validation
 
 ### 9.1 Component: Failure Message Formatter
 
@@ -462,7 +462,7 @@ Failure signs:
 - missing contextual fields
 - malformed string body
 
-### 9.2 Component: Alertmanager Payload Builder
+### 9.2 Component: Alertmanager Compatibility Payload Builder
 
 Commands:
 
@@ -490,7 +490,7 @@ Expected success:
 Failure signs:
 
 - payload not JSON-serializable
-- missing labels required by Alertmanager routing
+- missing labels required by downstream Alertmanager routing
 
 ### 9.3 Component: Alert Delivery Behavior When URL Is Missing
 
@@ -681,7 +681,7 @@ You can treat data-repo validation as complete when all of the following are tru
 - the layered lakehouse job succeeds on the success path and fails on the intentional failure path
 - the daily schedule and recovery sensor behave correctly against missing and existing curated partitions
 - dbt project files and environment wiring are valid
-- Alertmanager payload shape is correct
+- optional Alertmanager compatibility payload shape is correct
 - Docker image builds locally
 - Docker Hub push works manually or via GitHub Actions
 - published image coordinates are promoted into `hydrosat-infra`

@@ -236,7 +236,7 @@ def _dbt_cli_command(*args: str) -> list[str]:
 
 
 def build_failure_message(job_name: str, run_id: str, failure_message: str) -> str:
-    """Format a consistent alert body for Alertmanager-routed job failures."""
+    """Format a consistent failure message for the optional Alertmanager compatibility path."""
     return (
         f"Dagster job failure detected.\n"
         f"job_name={job_name}\n"
@@ -247,7 +247,7 @@ def build_failure_message(job_name: str, run_id: str, failure_message: str) -> s
 
 
 def build_alertmanager_payload(job_name: str, run_id: str, failure_message: str) -> list[dict]:
-    """Build the minimal Alertmanager v2 payload for a failed Dagster run."""
+    """Build the minimal Alertmanager v2 payload for optional external alert routing."""
     failed_at = datetime.now(UTC).isoformat()
     return [
         {
@@ -442,7 +442,7 @@ def lakehouse_partition_recovery_sensor(_context: SensorEvaluationContext):
 
 @run_failure_sensor(name="alertmanager_job_failure_alert", monitored_jobs=[hydrosat_lakehouse_job], minimum_interval_seconds=30)
 def alertmanager_job_failure_alert(context: RunFailureSensorContext):
-    """Forward Dagster job failures to Alertmanager so alert routing stays centralized."""
+    """Optionally forward Dagster job failures to Alertmanager when ALERTMANAGER_URL is configured."""
     alertmanager_url = os.getenv("ALERTMANAGER_URL", "")
 
     if not alertmanager_url:
