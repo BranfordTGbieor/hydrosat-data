@@ -49,22 +49,51 @@ When `HYDROSAT_DATA_LAKE_BUCKET` is set, the same layer layout is written to S3 
 ## Architecture
 
 ```mermaid
-flowchart LR
-  Feed[Sample Satellite Feed] --> Extract[Python Extract]
-  Extract --> Raw[Raw Layer]
-  Raw --> Stage[Staging Transform]
-  Stage --> Staging[Staging Layer]
-  Staging --> Curate[Curated Aggregate]
-  Curate --> Curated[Curated Layer]
-  Curate --> Dagster[Dagster Job]
-  Dagster --> Failure[Failure Signal]
+---
+config:
+  layout: elk
+  look: neo
+  theme: redux
+---
 
-  subgraph Storage
-    Raw
-    Staging
-    Curated
+flowchart LR
+
+  Feed["🛰️ Sample Satellite Feed<br/>Synthetic observation input"]
+
+  subgraph AWS["☁️ AWS Data Platform"]
+    direction LR
+
+    subgraph EKS["☸️ Amazon EKS<br/>Dagster runtime"]
+      direction TB
+      Schedule["🕒 Schedule / Sensors<br/>Automated trigger and recovery"]
+      Dagster["⚙️ Dagster<br/>Pipeline orchestration"]
+      Extract["🐍 Python Extract<br/>Writes raw observation data"]
+      Transform["🔄 dbt + DuckDB<br/>Builds downstream layers"]
+
+      Schedule --> Dagster
+    end
+
+    subgraph Lakehouse["🪣 S3 Lakehouse Storage"]
+      direction LR
+      Raw["🗂️ Raw Layer<br/>Initial ingest data"]
+      Staging["🧱 Staging Layer<br/>Intermediate transformed data"]
+      Curated["✅ Curated Layer<br/>Reporting-ready output"]
+    end
   end
+
+  Alerting["🚨 Alerting<br/>Pipeline failure notifications"]
+
+  Feed --> Extract
+  Dagster --> Extract
+  Extract --> Raw
+  Raw --> Transform
+  Dagster --> Transform
+  Transform --> Staging
+  Transform --> Curated
+  Dagster --> Alerting
 ```
+
+Source: [utils/mermaid/data-pipeline.mmd](./utils/mermaid/data-pipeline.mmd)
 
 Storage modes:
 
