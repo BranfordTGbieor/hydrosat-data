@@ -20,9 +20,33 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      runtime: ${{ steps.filter.outputs.runtime }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect runtime-impacting changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            runtime:
+              - '.github/workflows/ci.yml'
+              - 'Dockerfile'
+              - 'pyproject.toml'
+              - 'hydrosat_dagster/**'
+              - 'tests/**'
+              - 'dbt/**'
+
   checks:
     name: Checks
     runs-on: ubuntu-latest
+    needs: changes
+    if: github.ref_type == 'tag' || needs.changes.outputs.runtime == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,7 +57,10 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
-    needs: checks
+    needs:
+      - changes
+      - checks
+    if: github.ref_type == 'tag' || needs.changes.outputs.runtime == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,10 +78,65 @@ jobs:
       - name: Run tests
         run: pytest
 
+  dbt-validate:
+    name: dbt Validate
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - test
+    if: github.ref_type == 'tag' || needs.changes.outputs.runtime == 'true'
+    env:
+      HYDROSAT_BATCH_DATE: "2026-04-07"
+      HYDROSAT_DUCKDB_PATH: /tmp/hydrosat-ci/hydrosat.duckdb
+      HYDROSAT_RAW_URI: /tmp/hydrosat-ci/raw/sample.jsonl
+      HYDROSAT_STAGING_URI: /tmp/hydrosat-ci/staging/sample.jsonl
+      HYDROSAT_CURATED_URI: /tmp/hydrosat-ci/curated/sample.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Prepare dbt sample input
+        run: |
+          mkdir -p /tmp/hydrosat-ci/raw /tmp/hydrosat-ci/staging /tmp/hydrosat-ci/curated
+          cat > "${HYDROSAT_RAW_URI}" <<'EOF'
+          {"batch_id":"ci-batch","scene_id":"scene-001","tile_id":"T31UFQ","captured_at":"2026-04-07T10:15:00Z","surface_temp_c":27.4,"ndvi":0.82,"cloud_cover_pct":4.1}
+          {"batch_id":"ci-batch","scene_id":"scene-002","tile_id":"T31UGQ","captured_at":"2026-04-07T10:20:00Z","surface_temp_c":28.1,"ndvi":0.79,"cloud_cover_pct":6.5}
+          EOF
+
+      - name: Run dbt build
+        run: |
+          python -m dbt.cli.main build \
+            --project-dir dbt \
+            --profiles-dir dbt \
+            --target hydrosat
+
+      - name: Validate export macro
+        run: |
+          python -m dbt.cli.main run-operation export_lake_outputs \
+            --project-dir dbt \
+            --profiles-dir dbt \
+            --target hydrosat
+
+          test -s "${HYDROSAT_STAGING_URI}"
+          test -s "${HYDROSAT_CURATED_URI}"
+
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: test
+    needs:
+      - changes
+      - dbt-validate
+    if: github.ref_type == 'tag' || needs.changes.outputs.runtime == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,8 +147,10 @@ jobs:
   publish:
     name: Publish
     runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name == 'push' && (github.ref_name == 'main' || startsWith(github.ref, 'refs/tags/v'))
+    needs:
+      - changes
+      - build
+    if: github.event_name == 'push' && (github.ref_name == 'main' || startsWith(github.ref, 'refs/tags/v')) && (github.ref_type == 'tag' || needs.changes.outputs.runtime == 'true')
     steps:
       - name: Checkout
         uses: actions/checkout@v4

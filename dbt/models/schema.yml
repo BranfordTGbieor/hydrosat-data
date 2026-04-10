@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: stg_satellite_observations
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: partition_date
+        tests:
+          - not_null
+      - name: scene_id
+        tests:
+          - not_null
+      - name: tile_id
+        tests:
+          - not_null
+      - name: quality_band
+        tests:
+          - accepted_values:
+              values: ["high", "moderate"]
+      - name: vegetation_band
+        tests:
+          - accepted_values:
+              values: ["dense", "medium"]
+
+  - name: cur_satellite_tile_summary
+    columns:
+      - name: batch_id
+        tests:
+          - not_null
+      - name: partition_date
+        tests:
+          - not_null
+      - name: tile_id
+        tests:
+          - not_null
+      - name: observation_count
+        tests:
+          - not_null
