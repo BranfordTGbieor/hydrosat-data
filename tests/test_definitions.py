@@ -1,16 +1,17 @@
 import json
 from pathlib import Path
 
+from dagster import RunRequest, SkipReason
+
 from sight_poc_dagster.definitions import (
     SAMPLE_SATELLITE_OBSERVATIONS,
     build_alertmanager_payload,
     build_failure_message,
     build_lakehouse_run_config,
     daily_lakehouse_schedule,
-    sight_poc_lakehouse_job,
     lakehouse_partition_recovery_sensor,
+    sight_poc_lakehouse_job,
 )
-from dagster import RunRequest, SkipReason
 
 
 def lakehouse_run_config(should_fail: bool) -> dict:

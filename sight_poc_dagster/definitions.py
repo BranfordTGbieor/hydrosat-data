@@ -233,7 +233,10 @@ def _run_dbt_command(command: list[str], env: dict[str, str]) -> None:
 
     if process.returncode != 0:
         raise Failure(
-            f"dbt command failed: {' '.join(command)}\nstdout:\n{process.stdout}\nstderr:\n{process.stderr}"
+            "dbt command failed: "
+            f"{' '.join(command)}\n"
+            f"stdout:\n{process.stdout}\n"
+            f"stderr:\n{process.stderr}"
         )
 
 
@@ -321,7 +324,7 @@ def extract_satellite_observations(context) -> dict:
 
 @op
 def transform_with_dbt(context, raw_batch: dict) -> dict:
-    """Run dbt transforms for staging and curated layers, then export results back into the lake layout."""
+    """Run dbt transforms for staging/curated layers and export them back into the lake."""
     staged_path = _lake_uri(
         "staging",
         "satellite_observations",
@@ -460,7 +463,7 @@ def lakehouse_partition_recovery_sensor(_context: SensorEvaluationContext):
     minimum_interval_seconds=30,
 )
 def alertmanager_job_failure_alert(context: RunFailureSensorContext):
-    """Optionally forward Dagster job failures to Alertmanager when ALERTMANAGER_URL is configured."""
+    """Optionally forward Dagster job failures when ALERTMANAGER_URL is configured."""
     alertmanager_url = os.getenv("ALERTMANAGER_URL", "")
 
     if not alertmanager_url:
