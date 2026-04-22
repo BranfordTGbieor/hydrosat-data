@@ -55,7 +55,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -86,7 +86,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -117,7 +117,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -140,14 +140,14 @@ jobs:
           uv run python -m dbt.cli.main build \
             --project-dir dbt \
             --profiles-dir dbt \
-            --target sight-poc
+            --target sight_poc
 
       - name: Validate export macro
         run: |
           uv run python -m dbt.cli.main run-operation export_lake_outputs \
             --project-dir dbt \
             --profiles-dir dbt \
-            --target sight-poc
+            --target sight_poc
 
           test -s "${SIGHT_POC_STAGING_URI}"
           test -s "${SIGHT_POC_CURATED_URI}"

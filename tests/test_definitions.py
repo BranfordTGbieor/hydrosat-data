@@ -1,8 +1,12 @@
 import json
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+from urllib.error import URLError
 
 from dagster import RunRequest, SkipReason
 
+import sight_poc_dagster.definitions as definitions
 from sight_poc_dagster.definitions import (
     SAMPLE_SATELLITE_OBSERVATIONS,
     build_alertmanager_payload,
@@ -192,3 +196,167 @@ def test_recovery_sensor_skips_when_curated_partition_exists(tmp_path, monkeypat
 
     assert isinstance(result, SkipReason)
     assert "2026-04-03" in result.skip_message
+
+
+def test_helper_environment_overrides_and_uri_generation(monkeypatch):
+    monkeypatch.setenv("SIGHT_POC_DBT_DUCKDB_PATH", "/tmp/custom.duckdb")
+    monkeypatch.setenv("SIGHT_POC_RUNTIME_HOME", "/tmp/runtime-home")
+    monkeypatch.setenv("SIGHT_POC_DBT_TIMEOUT_SECONDS", "45")
+    monkeypatch.setenv("SIGHT_POC_DATA_LAKE_BUCKET", "demo-bucket")
+    monkeypatch.setenv("SIGHT_POC_DATA_LAKE_PREFIX", "demo-prefix")
+
+    assert definitions._dbt_duckdb_path() == Path("/tmp/custom.duckdb")
+    assert definitions._runtime_home_dir() == Path("/tmp/runtime-home")
+    assert definitions._dbt_command_timeout_seconds() == 45
+    assert (
+        definitions._lake_uri("raw", "records.jsonl")
+        == "s3://demo-bucket/demo-prefix/raw/records.jsonl"
+    )
+    assert definitions._split_s3_uri("s3://demo-bucket/demo-prefix/raw/records.jsonl") == (
+        "demo-bucket",
+        "demo-prefix/raw/records.jsonl",
+    )
+
+
+def test_local_text_and_json_helpers(tmp_path):
+    text_path = tmp_path / "nested" / "sample.txt"
+    definitions._write_text(str(text_path), "hello", "text/plain")
+    assert definitions._read_text(str(text_path)) == "hello"
+
+    jsonl_path = tmp_path / "nested" / "sample.jsonl"
+    records = [{"a": 1}, {"a": 2}]
+    definitions._jsonl_write(str(jsonl_path), records)
+    assert definitions._jsonl_read(str(jsonl_path)) == records
+
+    json_path = tmp_path / "nested" / "sample.json"
+    json_path.write_text(json.dumps(records), encoding="utf-8")
+    assert definitions._json_read(str(json_path)) == records
+
+    created_path = tmp_path / "another" / "dir" / "file.txt"
+    definitions._ensure_local_parent_dir(str(created_path))
+    assert created_path.parent.exists()
+
+
+def test_s3_helpers_use_client(monkeypatch):
+    stored: dict[str, object] = {}
+
+    class FakeBody:
+        def read(self):
+            return b"payload"
+
+    class FakeS3:
+        def put_object(self, **kwargs):
+            stored["put"] = kwargs
+
+        def get_object(self, **kwargs):
+            stored["get"] = kwargs
+            return {"Body": FakeBody()}
+
+        def list_objects_v2(self, **kwargs):
+            stored["list"] = kwargs
+            return {"Contents": [{"Key": "one"}]}
+
+    monkeypatch.setattr(definitions, "_s3_client", lambda: FakeS3())
+    monkeypatch.setenv("SIGHT_POC_DATA_LAKE_BUCKET", "bucket")
+    monkeypatch.setenv("SIGHT_POC_DATA_LAKE_PREFIX", "prefix")
+
+    definitions._write_text("s3://bucket/key.txt", "payload", "text/plain")
+    assert stored["put"]["Bucket"] == "bucket"
+    assert stored["put"]["Key"] == "key.txt"
+
+    assert definitions._read_text("s3://bucket/key.txt") == "payload"
+    assert stored["get"] == {"Bucket": "bucket", "Key": "key.txt"}
+    assert definitions._partition_has_curated_output("2026-04-01") is True
+    assert stored["list"]["Bucket"] == "bucket"
+
+
+def test_run_dbt_command_raises_on_timeout(monkeypatch):
+    def fake_run(*args, **kwargs):
+        exc = subprocess.TimeoutExpired(cmd=["dbt", "build"], timeout=15, output="out")
+        exc.stderr = "err"
+        raise exc
+
+    monkeypatch.setattr(definitions, "_dbt_command_timeout_seconds", lambda: 15)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    try:
+        definitions._run_dbt_command(["dbt", "build"], {})
+    except Exception as exc:
+        assert "timed out after 15 seconds" in str(exc)
+    else:
+        raise AssertionError("Expected dbt timeout failure")
+
+
+def test_run_dbt_command_raises_on_non_zero_exit(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=2, stdout="bad out", stderr="bad err"),
+    )
+
+    try:
+        definitions._run_dbt_command(["dbt", "build"], {})
+    except Exception as exc:
+        assert "dbt command failed" in str(exc)
+        assert "bad err" in str(exc)
+    else:
+        raise AssertionError("Expected dbt non-zero failure")
+
+
+def _fake_failure_context(message: str = "Run failed"):
+    return SimpleNamespace(
+        dagster_run=SimpleNamespace(job_name="sight_poc_lakehouse_job", run_id="run-123"),
+        failure_event=SimpleNamespace(message=message),
+        log=SimpleNamespace(
+            warning=lambda *args, **kwargs: None,
+            info=lambda *args, **kwargs: None,
+        ),
+    )
+
+
+def test_alertmanager_sensor_skips_when_url_unset(monkeypatch):
+    recorded = []
+    monkeypatch.delenv("ALERTMANAGER_URL", raising=False)
+
+    context = SimpleNamespace(log=SimpleNamespace(warning=lambda message: recorded.append(message)))
+    definitions.alertmanager_job_failure_alert._run_status_sensor_fn(context)
+
+    assert recorded == ["ALERTMANAGER_URL is unset; skipping Alertmanager publish."]
+
+
+def test_alertmanager_sensor_publishes_when_url_set(monkeypatch):
+    monkeypatch.setenv("ALERTMANAGER_URL", "https://alerts.example")
+    published = []
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            published.append("entered")
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(definitions, "urlopen", lambda request, timeout: FakeResponse())
+    context = _fake_failure_context("boom")
+
+    definitions.alertmanager_job_failure_alert._run_status_sensor_fn(context)
+    assert published == ["entered"]
+
+
+def test_alertmanager_sensor_raises_when_publish_fails(monkeypatch):
+    monkeypatch.setenv("ALERTMANAGER_URL", "https://alerts.example")
+    monkeypatch.setattr(
+        definitions,
+        "urlopen",
+        lambda request, timeout: (_ for _ in ()).throw(URLError("boom")),
+    )
+    context = _fake_failure_context("boom")
+
+    try:
+        definitions.alertmanager_job_failure_alert._run_status_sensor_fn(context)
+    except Exception as exc:
+        assert "Failed to publish Dagster alert to Alertmanager" in str(exc)
+    else:
+        raise AssertionError("Expected Alertmanager publish failure")

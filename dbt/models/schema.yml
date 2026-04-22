@@ -18,11 +18,13 @@ models:
       - name: quality_band
         tests:
           - accepted_values:
-              values: ["high", "moderate"]
+              arguments:
+                values: ["high", "moderate"]
       - name: vegetation_band
         tests:
           - accepted_values:
-              values: ["dense", "medium"]
+              arguments:
+                values: ["dense", "medium"]
 
   - name: cur_satellite_tile_summary
     columns:
