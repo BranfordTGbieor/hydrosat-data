@@ -19,3 +19,4 @@ Thumbs.db
 dbt/target/
 dbt/logs/
 dbt/.user.yml
+TODO.md

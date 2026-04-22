@@ -142,7 +142,9 @@ def _split_s3_uri(uri: str) -> tuple[str, str]:
 def _write_text(uri: str, text: str, content_type: str) -> None:
     if uri.startswith("s3://"):
         bucket, key = _split_s3_uri(uri)
-        _s3_client().put_object(Bucket=bucket, Key=key, Body=text.encode("utf-8"), ContentType=content_type)
+        _s3_client().put_object(
+            Bucket=bucket, Key=key, Body=text.encode("utf-8"), ContentType=content_type
+        )
         return
 
     path = Path(uri)
@@ -160,7 +162,9 @@ def _read_text(uri: str) -> str:
 
 
 def _jsonl_write(uri: str, records: list[dict]) -> None:
-    _write_text(uri, "".join(f"{json.dumps(record)}\n" for record in records), "application/x-ndjson")
+    _write_text(
+        uri, "".join(f"{json.dumps(record)}\n" for record in records), "application/x-ndjson"
+    )
 
 
 def _jsonl_read(uri: str) -> list[dict]:
@@ -180,7 +184,9 @@ def _partition_has_curated_output(partition_date: str) -> bool:
 
     if partition_prefix.startswith("s3://"):
         bucket, key_prefix = _split_s3_uri(partition_prefix)
-        response = _s3_client().list_objects_v2(Bucket=bucket, Prefix=f"{key_prefix.rstrip('/')}/", MaxKeys=1)
+        response = _s3_client().list_objects_v2(
+            Bucket=bucket, Prefix=f"{key_prefix.rstrip('/')}/", MaxKeys=1
+        )
         return bool(response.get("Contents"))
 
     partition_path = Path(partition_prefix)
@@ -286,7 +292,9 @@ def extract_satellite_observations(context) -> dict:
     """Simulate a Python-driven extract into the raw layer."""
     partition_date = _partition_date(context.op_config["batch_date"])
     batch_id = str(uuid4())
-    raw_path = _lake_uri("raw", "satellite_observations", f"ingest_date={partition_date}", f"{batch_id}.jsonl")
+    raw_path = _lake_uri(
+        "raw", "satellite_observations", f"ingest_date={partition_date}", f"{batch_id}.jsonl"
+    )
 
     raw_records = []
     for record in SAMPLE_SATELLITE_OBSERVATIONS:
@@ -394,7 +402,9 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
         raise Failure("Intentional failure to validate run-failure alerting.")
 
     context.log.info("dbt exported %s staged observations to %s", len(staged_records), staged_path)
-    context.log.info("dbt exported %s curated tile summaries to %s", len(curated_records), curated_path)
+    context.log.info(
+        "dbt exported %s curated tile summaries to %s", len(curated_records), curated_path
+    )
 
     return {
         "batch_id": raw_batch["batch_id"],
@@ -422,7 +432,11 @@ def daily_lakehouse_schedule(_context):
     return build_lakehouse_run_config(batch_date=_operational_partition_date())
 
 
-@sensor(name="lakehouse_partition_recovery_sensor", minimum_interval_seconds=300, job=sight_poc_lakehouse_job)
+@sensor(
+    name="lakehouse_partition_recovery_sensor",
+    minimum_interval_seconds=300,
+    job=sight_poc_lakehouse_job,
+)
 def lakehouse_partition_recovery_sensor(_context: SensorEvaluationContext):
     """Trigger the daily partition if the expected curated output is still missing."""
     partition_date = _operational_partition_date()
@@ -440,7 +454,11 @@ def lakehouse_partition_recovery_sensor(_context: SensorEvaluationContext):
     )
 
 
-@run_failure_sensor(name="alertmanager_job_failure_alert", monitored_jobs=[sight_poc_lakehouse_job], minimum_interval_seconds=30)
+@run_failure_sensor(
+    name="alertmanager_job_failure_alert",
+    monitored_jobs=[sight_poc_lakehouse_job],
+    minimum_interval_seconds=30,
+)
 def alertmanager_job_failure_alert(context: RunFailureSensorContext):
     """Optionally forward Dagster job failures to Alertmanager when ALERTMANAGER_URL is configured."""
     alertmanager_url = os.getenv("ALERTMANAGER_URL", "")
