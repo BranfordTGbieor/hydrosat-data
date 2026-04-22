@@ -1,6 +1,6 @@
-# Hydrosat Data Validation Runbook
+# Sight PoC Data Validation Runbook
 
-This runbook validates the `hydrosat-data` repository from local code quality through Docker image publishing and Dagster runtime behavior.
+This runbook validates the `sight-poc-data` repository from local code quality through Docker image publishing and Dagster runtime behavior.
 
 Use this document when you want to prove that:
 
@@ -13,11 +13,11 @@ Use this document when you want to prove that:
 - the optional Alertmanager compatibility payload shape is correct
 - the Docker image builds locally
 - the Docker Hub release workflow is ready to publish
-- the built image can be consumed by `hydrosat-infra`
+- the built image can be consumed by `sight-poc-infra`
 
 This runbook assumes:
 
-- repo root is `hydrosat-data/`
+- repo root is `sight-poc-data/`
 - Python 3.12 is available
 - Docker is available locally
 - optionally, Docker Hub credentials are available
@@ -36,7 +36,7 @@ Run these sections in order:
 8. Optional Alertmanager compatibility validation
 9. Container build validation
 10. Docker Hub release workflow validation
-11. Integration handoff validation for `hydrosat-infra`
+11. Integration handoff validation for `sight-poc-infra`
 12. S3-backed runtime validation
 
 ## 2. Local Environment Setup
@@ -46,7 +46,7 @@ Run these sections in order:
 Commands:
 
 ```bash
-cd /home/branford-t-gbieor/Desktop/gbieor/applications/exercises/hydrosat/hydrosat-data
+cd /home/branford-t-gbieor/Desktop/gbieor/applications/exercises/sight-poc/sight-poc-data
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -69,8 +69,8 @@ Failure signs:
 Commands:
 
 ```bash
-python -m compileall hydrosat_dagster tests
-python -c "from hydrosat_dagster.definitions import defs; print(defs)"
+python -m compileall sight_poc_dagster tests
+python -c "from sight_poc_dagster.definitions import defs; print(defs)"
 ```
 
 Expected success:
@@ -90,8 +90,8 @@ Failure signs:
 
 Files:
 
-- [hydrosat_dagster/definitions.py](/home/branford-t-gbieor/Desktop/gbieor/applications/exercises/hydrosat/hydrosat-data/hydrosat_dagster/definitions.py)
-- [tests/test_definitions.py](/home/branford-t-gbieor/Desktop/gbieor/applications/exercises/hydrosat/hydrosat-data/tests/test_definitions.py)
+- [sight_poc_dagster/definitions.py](/home/branford-t-gbieor/Desktop/gbieor/applications/exercises/sight-poc/sight-poc-data/sight_poc_dagster/definitions.py)
+- [tests/test_definitions.py](/home/branford-t-gbieor/Desktop/gbieor/applications/exercises/sight-poc/sight-poc-data/tests/test_definitions.py)
 
 Commands:
 
@@ -102,8 +102,8 @@ pytest -q
 Expected success:
 
 - all tests pass
-- success-path test confirms `hydrosat_lakehouse_job` returns `success=True`
-- failure-path test confirms `hydrosat_lakehouse_job` returns `success=False`
+- success-path test confirms `sight_poc_lakehouse_job` returns `success=True`
+- failure-path test confirms `sight_poc_lakehouse_job` returns `success=False`
 - schedule test confirms the current UTC partition is injected into run config
 - recovery-sensor tests confirm a missing curated partition yields a `RunRequest` and an existing partition yields a `SkipReason`
 - payload-format tests confirm the optional Alertmanager compatibility body contains the expected labels and annotations
@@ -137,7 +137,7 @@ Commands:
 
 ```bash
 python - <<'PY'
-from hydrosat_dagster.definitions import hydrosat_lakehouse_job
+from sight_poc_dagster.definitions import sight_poc_lakehouse_job
 
 run_config = {
     "ops": {
@@ -147,7 +147,7 @@ run_config = {
     }
 }
 
-result = hydrosat_lakehouse_job.execute_in_process(run_config=run_config, raise_on_error=False)
+result = sight_poc_lakehouse_job.execute_in_process(run_config=run_config, raise_on_error=False)
 print("success=", result.success)
 PY
 ```
@@ -183,7 +183,7 @@ Commands:
 
 ```bash
 python - <<'PY'
-from hydrosat_dagster.definitions import hydrosat_lakehouse_job
+from sight_poc_dagster.definitions import sight_poc_lakehouse_job
 
 run_config = {
     "ops": {
@@ -193,7 +193,7 @@ run_config = {
     }
 }
 
-result = hydrosat_lakehouse_job.execute_in_process(run_config=run_config, raise_on_error=False)
+result = sight_poc_lakehouse_job.execute_in_process(run_config=run_config, raise_on_error=False)
 print("success=", result.success)
 PY
 ```
@@ -216,7 +216,7 @@ Commands:
 
 ```bash
 python - <<'PY'
-from hydrosat_dagster.definitions import daily_lakehouse_schedule
+from sight_poc_dagster.definitions import daily_lakehouse_schedule
 
 run_config = daily_lakehouse_schedule(None)
 print(run_config)
@@ -240,11 +240,11 @@ Failure signs:
 Commands:
 
 ```bash
-export HYDROSAT_DATA_LAKE_ROOT=/tmp/hydrosat-data-lake-sensor
-rm -rf "${HYDROSAT_DATA_LAKE_ROOT}"
+export SIGHT_POC_DATA_LAKE_ROOT=/tmp/sight-poc-data-lake-sensor
+rm -rf "${SIGHT_POC_DATA_LAKE_ROOT}"
 
 python - <<'PY'
-from hydrosat_dagster.definitions import lakehouse_partition_recovery_sensor
+from sight_poc_dagster.definitions import lakehouse_partition_recovery_sensor
 
 result = lakehouse_partition_recovery_sensor(None)
 print(type(result).__name__)
@@ -269,12 +269,12 @@ Failure signs:
 Commands:
 
 ```bash
-export HYDROSAT_DATA_LAKE_ROOT=/tmp/hydrosat-data-lake-sensor
-mkdir -p "${HYDROSAT_DATA_LAKE_ROOT}/curated/tile_summary/partition_date=$(date -u +%F)"
-printf '[]' > "${HYDROSAT_DATA_LAKE_ROOT}/curated/tile_summary/partition_date=$(date -u +%F)/existing-batch.json"
+export SIGHT_POC_DATA_LAKE_ROOT=/tmp/sight-poc-data-lake-sensor
+mkdir -p "${SIGHT_POC_DATA_LAKE_ROOT}/curated/tile_summary/partition_date=$(date -u +%F)"
+printf '[]' > "${SIGHT_POC_DATA_LAKE_ROOT}/curated/tile_summary/partition_date=$(date -u +%F)/existing-batch.json"
 
 python - <<'PY'
-from hydrosat_dagster.definitions import lakehouse_partition_recovery_sensor
+from sight_poc_dagster.definitions import lakehouse_partition_recovery_sensor
 
 result = lakehouse_partition_recovery_sensor(None)
 print(type(result).__name__)
@@ -299,11 +299,11 @@ Failure signs:
 Commands:
 
 ```bash
-export HYDROSAT_DATA_LAKE_ROOT=/tmp/hydrosat-data-lake
-rm -rf "${HYDROSAT_DATA_LAKE_ROOT}"
+export SIGHT_POC_DATA_LAKE_ROOT=/tmp/sight-poc-data-lake
+rm -rf "${SIGHT_POC_DATA_LAKE_ROOT}"
 
 python - <<'PY'
-from hydrosat_dagster.definitions import hydrosat_lakehouse_job
+from sight_poc_dagster.definitions import sight_poc_lakehouse_job
 
 run_config = {
     "ops": {
@@ -313,11 +313,11 @@ run_config = {
     }
 }
 
-result = hydrosat_lakehouse_job.execute_in_process(run_config=run_config, raise_on_error=False)
+result = sight_poc_lakehouse_job.execute_in_process(run_config=run_config, raise_on_error=False)
 print("success=", result.success)
 PY
 
-find "${HYDROSAT_DATA_LAKE_ROOT}" -type f | sort
+find "${SIGHT_POC_DATA_LAKE_ROOT}" -type f | sort
 ```
 
 Expected success:
@@ -341,7 +341,7 @@ from pathlib import Path
 import json
 import os
 
-root = Path(os.environ["HYDROSAT_DATA_LAKE_ROOT"])
+root = Path(os.environ["SIGHT_POC_DATA_LAKE_ROOT"])
 curated_file = next((root / "curated").rglob("*.json"))
 print(curated_file)
 print(json.dumps(json.loads(curated_file.read_text()), indent=2))
@@ -369,17 +369,17 @@ Commands:
 ```bash
 python - <<'PY'
 import os
-print("HYDROSAT_DATA_LAKE_ROOT=", os.getenv("HYDROSAT_DATA_LAKE_ROOT", "/tmp/hydrosat-data-lake"))
-print("HYDROSAT_DATA_LAKE_BUCKET=", os.getenv("HYDROSAT_DATA_LAKE_BUCKET", ""))
-print("HYDROSAT_DATA_LAKE_PREFIX=", os.getenv("HYDROSAT_DATA_LAKE_PREFIX", "hydrosat"))
+print("SIGHT_POC_DATA_LAKE_ROOT=", os.getenv("SIGHT_POC_DATA_LAKE_ROOT", "/tmp/sight-poc-data-lake"))
+print("SIGHT_POC_DATA_LAKE_BUCKET=", os.getenv("SIGHT_POC_DATA_LAKE_BUCKET", ""))
+print("SIGHT_POC_DATA_LAKE_PREFIX=", os.getenv("SIGHT_POC_DATA_LAKE_PREFIX", "sight-poc"))
 PY
 ```
 
 Expected success:
 
-- local runs can rely only on `HYDROSAT_DATA_LAKE_ROOT`
-- cluster runs can switch to S3 by setting `HYDROSAT_DATA_LAKE_BUCKET`
-- `HYDROSAT_DATA_LAKE_PREFIX` defaults to `hydrosat`
+- local runs can rely only on `SIGHT_POC_DATA_LAKE_ROOT`
+- cluster runs can switch to S3 by setting `SIGHT_POC_DATA_LAKE_BUCKET`
+- `SIGHT_POC_DATA_LAKE_PREFIX` defaults to `sight-poc`
 
 Failure signs:
 
@@ -420,10 +420,10 @@ Commands:
 ```bash
 python - <<'PY'
 import os
-print("HYDROSAT_RAW_URI=", os.getenv("HYDROSAT_RAW_URI", "set-by-dagster"))
-print("HYDROSAT_STAGING_URI=", os.getenv("HYDROSAT_STAGING_URI", "set-by-dagster"))
-print("HYDROSAT_CURATED_URI=", os.getenv("HYDROSAT_CURATED_URI", "set-by-dagster"))
-print("HYDROSAT_DUCKDB_PATH=", os.getenv("HYDROSAT_DUCKDB_PATH", "/tmp/hydrosat-data-lake/_dbt/hydrosat.duckdb"))
+print("SIGHT_POC_RAW_URI=", os.getenv("SIGHT_POC_RAW_URI", "set-by-dagster"))
+print("SIGHT_POC_STAGING_URI=", os.getenv("SIGHT_POC_STAGING_URI", "set-by-dagster"))
+print("SIGHT_POC_CURATED_URI=", os.getenv("SIGHT_POC_CURATED_URI", "set-by-dagster"))
+print("SIGHT_POC_DUCKDB_PATH=", os.getenv("SIGHT_POC_DUCKDB_PATH", "/tmp/sight-poc-data-lake/_dbt/sight-poc.duckdb"))
 PY
 ```
 
@@ -445,15 +445,15 @@ Commands:
 
 ```bash
 python - <<'PY'
-from hydrosat_dagster.definitions import build_failure_message
-print(build_failure_message("hydrosat_lakehouse_job", "abc123", "boom"))
+from sight_poc_dagster.definitions import build_failure_message
+print(build_failure_message("sight_poc_lakehouse_job", "abc123", "boom"))
 PY
 ```
 
 Expected success:
 
 - output includes:
-  - `job_name=hydrosat_lakehouse_job`
+  - `job_name=sight_poc_lakehouse_job`
   - `run_id=abc123`
   - `message=boom`
 
@@ -468,9 +468,9 @@ Commands:
 
 ```bash
 python - <<'PY'
-from hydrosat_dagster.definitions import build_alertmanager_payload
+from sight_poc_dagster.definitions import build_alertmanager_payload
 import json
-payload = build_alertmanager_payload("hydrosat_lakehouse_job", "abc123", "boom")
+payload = build_alertmanager_payload("sight_poc_lakehouse_job", "abc123", "boom")
 print(json.dumps(payload, indent=2))
 PY
 ```
@@ -481,10 +481,10 @@ Expected success:
 - labels include:
   - `alertname=DagsterJobFailed`
   - `severity=critical`
-  - `job_name=hydrosat_lakehouse_job`
+  - `job_name=sight_poc_lakehouse_job`
   - `run_id=abc123`
 - annotations include:
-  - `summary=Dagster job failed: hydrosat_lakehouse_job`
+  - `summary=Dagster job failed: sight_poc_lakehouse_job`
   - `description=boom`
 
 Failure signs:
@@ -499,7 +499,7 @@ Commands:
 ```bash
 python - <<'PY'
 import os
-from hydrosat_dagster.definitions import alertmanager_job_failure_alert
+from sight_poc_dagster.definitions import alertmanager_job_failure_alert
 print("Sensor loaded:", alertmanager_job_failure_alert.name)
 print("ALERTMANAGER_URL:", os.getenv("ALERTMANAGER_URL", ""))
 PY
@@ -521,8 +521,8 @@ Failure signs:
 Commands:
 
 ```bash
-docker build -t hydrosat-dagster:local .
-docker image inspect hydrosat-dagster:local --format '{{.Id}}'
+docker build -t sight-poc-dagster:local .
+docker image inspect sight-poc-dagster:local --format '{{.Id}}'
 ```
 
 Expected success:
@@ -541,8 +541,8 @@ Failure signs:
 Commands:
 
 ```bash
-docker run --rm hydrosat-dagster:local python -m compileall hydrosat_dagster
-docker run --rm hydrosat-dagster:local python -c "from hydrosat_dagster.definitions import defs; print(defs)"
+docker run --rm sight-poc-dagster:local python -m compileall sight_poc_dagster
+docker run --rm sight-poc-dagster:local python -c "from sight_poc_dagster.definitions import defs; print(defs)"
 ```
 
 Expected success:
@@ -560,19 +560,19 @@ Failure signs:
 
 File:
 
-- [ci.yml](/home/branford-t-gbieor/Desktop/gbieor/applications/exercises/hydrosat/hydrosat-data/.github/workflows/ci.yml)
+- [ci.yml](/home/branford-t-gbieor/Desktop/gbieor/applications/exercises/sight-poc/sight-poc-data/.github/workflows/ci.yml)
 
 Required GitHub configuration:
 
 - secret `DOCKERHUB_USERNAME`
 - secret `DOCKERHUB_TOKEN`
 - variable `DOCKERHUB_REPOSITORY`
-- secret `HYDROSAT_INFRA_REPO_TOKEN`
+- secret `SIGHT_POC_INFRA_REPO_TOKEN`
 
 Recommended sample value:
 
 ```text
-DOCKERHUB_REPOSITORY=<your-dockerhub-user>/hydrosat-dagster
+DOCKERHUB_REPOSITORY=<your-dockerhub-user>/sight-poc-dagster
 ```
 
 Trigger paths:
@@ -584,7 +584,7 @@ Expected success:
 
 - `main` pushes publish `latest`
 - version tag pushes publish the same immutable tag
-- version tag pushes notify `hydrosat-infra` for promotion
+- version tag pushes notify `sight-poc-infra` for promotion
 
 Failure signs:
 
@@ -597,7 +597,7 @@ Failure signs:
 Commands:
 
 ```bash
-export DOCKERHUB_REPOSITORY=<your-dockerhub-user>/hydrosat-dagster
+export DOCKERHUB_REPOSITORY=<your-dockerhub-user>/sight-poc-dagster
 export IMAGE_TAG=v0.1.0
 
 docker login
@@ -619,24 +619,24 @@ Failure signs:
 
 ### 12.1 Component: Image Tag Handoff
 
-After publishing a version tag, `hydrosat-data` dispatches a promotion event and `hydrosat-infra` updates GitOps values automatically.
+After publishing a version tag, `sight-poc-data` dispatches a promotion event and `sight-poc-infra` updates GitOps values automatically.
 
 Sample value:
 
 ```yaml
 image:
-  repository: docker.io/<your-dockerhub-user>/hydrosat-dagster
+  repository: docker.io/<your-dockerhub-user>/sight-poc-dagster
   tag: v0.1.0
 ```
 
 File to update in infra:
 
-- [values-gitops.yaml](/home/branford-t-gbieor/Desktop/gbieor/applications/exercises/hydrosat/hydrosat-infra/helm/dagster/values-gitops.yaml)
+- [values-gitops.yaml](/home/branford-t-gbieor/Desktop/gbieor/applications/exercises/sight-poc/sight-poc-infra/helm/dagster/values-gitops.yaml)
 
 Expected success:
 
-- `hydrosat-infra` updates `helm/dagster/values-gitops.yaml`
-- Argo CD in `hydrosat-infra` can reconcile the new image tag
+- `sight-poc-infra` updates `helm/dagster/values-gitops.yaml`
+- Argo CD in `sight-poc-infra` can reconcile the new image tag
 
 Failure signs:
 
@@ -647,14 +647,14 @@ Failure signs:
 
 ### 13.1 Component: Bucket-Backed Lake Layout
 
-This requires the S3 bucket and Dagster IRSA role from `hydrosat-infra`.
+This requires the S3 bucket and Dagster IRSA role from `sight-poc-infra`.
 
 Commands:
 
 ```bash
-export HYDROSAT_DATA_LAKE_BUCKET=<bucket-from-hydrosat-infra>
-export HYDROSAT_DATA_LAKE_PREFIX=hydrosat
-unset HYDROSAT_DATA_LAKE_ROOT
+export SIGHT_POC_DATA_LAKE_BUCKET=<bucket-from-sight-poc-infra>
+export SIGHT_POC_DATA_LAKE_PREFIX=sight-poc
+unset SIGHT_POC_DATA_LAKE_ROOT
 ```
 
 Then rerun the success-path execution from section `5.1` in an environment that has AWS credentials or the expected IRSA role.
@@ -662,9 +662,9 @@ Then rerun the success-path execution from section `5.1` in an environment that 
 Expected success:
 
 - raw, staging, and curated outputs are written to:
-  - `s3://<bucket>/hydrosat/raw/...`
-  - `s3://<bucket>/hydrosat/staging/...`
-  - `s3://<bucket>/hydrosat/curated/...`
+  - `s3://<bucket>/sight-poc/raw/...`
+  - `s3://<bucket>/sight-poc/staging/...`
+  - `s3://<bucket>/sight-poc/curated/...`
 
 Failure signs:
 
@@ -684,4 +684,4 @@ You can treat data-repo validation as complete when all of the following are tru
 - optional Alertmanager compatibility payload shape is correct
 - Docker image builds locally
 - Docker Hub push works manually or via GitHub Actions
-- published image coordinates are promoted into `hydrosat-infra`
+- published image coordinates are promoted into `sight-poc-infra`

@@ -1,13 +1,13 @@
 import json
 from pathlib import Path
 
-from hydrosat_dagster.definitions import (
+from sight_poc_dagster.definitions import (
     SAMPLE_SATELLITE_OBSERVATIONS,
     build_alertmanager_payload,
     build_failure_message,
     build_lakehouse_run_config,
     daily_lakehouse_schedule,
-    hydrosat_lakehouse_job,
+    sight_poc_lakehouse_job,
     lakehouse_partition_recovery_sensor,
 )
 from dagster import RunRequest, SkipReason
@@ -18,9 +18,9 @@ def lakehouse_run_config(should_fail: bool) -> dict:
 
 
 def fake_dbt_runner(command: list[str], env: dict[str, str]) -> None:
-    raw_path = env["HYDROSAT_RAW_URI"]
-    staged_path = env["HYDROSAT_STAGING_URI"]
-    curated_path = env["HYDROSAT_CURATED_URI"]
+    raw_path = env["SIGHT_POC_RAW_URI"]
+    staged_path = env["SIGHT_POC_STAGING_URI"]
+    curated_path = env["SIGHT_POC_CURATED_URI"]
 
     if "run-operation" not in command:
         return
@@ -33,7 +33,7 @@ def fake_dbt_runner(command: list[str], env: dict[str, str]) -> None:
     for record in raw_records:
         staged_record = {
             "batch_id": record["batch_id"],
-            "partition_date": env["HYDROSAT_BATCH_DATE"],
+            "partition_date": env["SIGHT_POC_BATCH_DATE"],
             "scene_id": record["scene_id"],
             "tile_id": record["tile_id"],
             "captured_at": record["captured_at"],
@@ -56,7 +56,7 @@ def fake_dbt_runner(command: list[str], env: dict[str, str]) -> None:
         curated_records.append(
             {
                 "batch_id": records[0]["batch_id"],
-                "partition_date": env["HYDROSAT_BATCH_DATE"],
+                "partition_date": env["SIGHT_POC_BATCH_DATE"],
                 "tile_id": tile_id,
                 "observation_count": len(records),
                 "avg_surface_temp_c": round(sum(record["surface_temp_c"] for record in records) / len(records), 2),
@@ -74,10 +74,10 @@ def fake_dbt_runner(command: list[str], env: dict[str, str]) -> None:
 
 
 def test_lakehouse_job_writes_raw_dbt_staging_and_curated_layers(tmp_path, monkeypatch):
-    monkeypatch.setenv("HYDROSAT_DATA_LAKE_ROOT", str(tmp_path))
-    monkeypatch.setattr("hydrosat_dagster.definitions._run_dbt_command", fake_dbt_runner)
+    monkeypatch.setenv("SIGHT_POC_DATA_LAKE_ROOT", str(tmp_path))
+    monkeypatch.setattr("sight_poc_dagster.definitions._run_dbt_command", fake_dbt_runner)
 
-    result = hydrosat_lakehouse_job.execute_in_process(
+    result = sight_poc_lakehouse_job.execute_in_process(
         run_config=lakehouse_run_config(False),
         raise_on_error=False,
     )
@@ -102,10 +102,10 @@ def test_lakehouse_job_writes_raw_dbt_staging_and_curated_layers(tmp_path, monke
 
 
 def test_lakehouse_job_fails_when_quality_gate_is_configured_to_fail(tmp_path, monkeypatch):
-    monkeypatch.setenv("HYDROSAT_DATA_LAKE_ROOT", str(tmp_path))
-    monkeypatch.setattr("hydrosat_dagster.definitions._run_dbt_command", fake_dbt_runner)
+    monkeypatch.setenv("SIGHT_POC_DATA_LAKE_ROOT", str(tmp_path))
+    monkeypatch.setattr("sight_poc_dagster.definitions._run_dbt_command", fake_dbt_runner)
 
-    result = hydrosat_lakehouse_job.execute_in_process(
+    result = sight_poc_lakehouse_job.execute_in_process(
         run_config=lakehouse_run_config(True),
         raise_on_error=False,
     )
@@ -118,19 +118,19 @@ def test_lakehouse_job_fails_when_quality_gate_is_configured_to_fail(tmp_path, m
 
 def test_failure_message_contains_core_context():
     message = build_failure_message(
-        job_name="hydrosat_lakehouse_job",
+        job_name="sight_poc_lakehouse_job",
         run_id="abc123",
         failure_message="boom",
     )
 
-    assert "job_name=hydrosat_lakehouse_job" in message
+    assert "job_name=sight_poc_lakehouse_job" in message
     assert "run_id=abc123" in message
     assert "message=boom" in message
 
 
 def test_alertmanager_payload_contains_expected_labels_and_annotations():
     payload = build_alertmanager_payload(
-        job_name="hydrosat_lakehouse_job",
+        job_name="sight_poc_lakehouse_job",
         run_id="abc123",
         failure_message="boom",
     )
@@ -139,14 +139,14 @@ def test_alertmanager_payload_contains_expected_labels_and_annotations():
 
     assert alert["labels"]["alertname"] == "DagsterJobFailed"
     assert alert["labels"]["severity"] == "critical"
-    assert alert["labels"]["job_name"] == "hydrosat_lakehouse_job"
+    assert alert["labels"]["job_name"] == "sight_poc_lakehouse_job"
     assert alert["labels"]["run_id"] == "abc123"
-    assert alert["annotations"]["summary"] == "Dagster job failed: hydrosat_lakehouse_job"
+    assert alert["annotations"]["summary"] == "Dagster job failed: sight_poc_lakehouse_job"
     assert alert["annotations"]["description"] == "boom"
 
 
 def test_daily_lakehouse_schedule_targets_current_partition(monkeypatch):
-    monkeypatch.setattr("hydrosat_dagster.definitions._operational_partition_date", lambda: "2026-04-02")
+    monkeypatch.setattr("sight_poc_dagster.definitions._operational_partition_date", lambda: "2026-04-02")
 
     run_request = daily_lakehouse_schedule(None)
 
@@ -154,20 +154,20 @@ def test_daily_lakehouse_schedule_targets_current_partition(monkeypatch):
 
 
 def test_recovery_sensor_requests_run_when_curated_partition_is_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("HYDROSAT_DATA_LAKE_ROOT", str(tmp_path))
-    monkeypatch.setattr("hydrosat_dagster.definitions._operational_partition_date", lambda: "2026-04-03")
+    monkeypatch.setenv("SIGHT_POC_DATA_LAKE_ROOT", str(tmp_path))
+    monkeypatch.setattr("sight_poc_dagster.definitions._operational_partition_date", lambda: "2026-04-03")
 
     result = lakehouse_partition_recovery_sensor(None)
 
     assert isinstance(result, RunRequest)
     assert result.run_key == "lakehouse-recovery-2026-04-03"
     assert result.run_config == build_lakehouse_run_config(batch_date="2026-04-03")
-    assert result.tags["hydrosat/trigger"] == "recovery-sensor"
+    assert result.tags["sight-poc/trigger"] == "recovery-sensor"
 
 
 def test_recovery_sensor_skips_when_curated_partition_exists(tmp_path, monkeypatch):
-    monkeypatch.setenv("HYDROSAT_DATA_LAKE_ROOT", str(tmp_path))
-    monkeypatch.setattr("hydrosat_dagster.definitions._operational_partition_date", lambda: "2026-04-03")
+    monkeypatch.setenv("SIGHT_POC_DATA_LAKE_ROOT", str(tmp_path))
+    monkeypatch.setattr("sight_poc_dagster.definitions._operational_partition_date", lambda: "2026-04-03")
 
     curated_dir = tmp_path / "curated" / "tile_summary" / "partition_date=2026-04-03"
     curated_dir.mkdir(parents=True, exist_ok=True)

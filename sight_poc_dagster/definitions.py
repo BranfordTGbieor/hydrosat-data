@@ -65,15 +65,15 @@ def _repo_root() -> Path:
 
 def _lake_root() -> Path:
     """Use a local filesystem root that mirrors the intended S3 raw/staging/curated layout."""
-    return Path(os.getenv("HYDROSAT_DATA_LAKE_ROOT", "/tmp/hydrosat-data-lake"))
+    return Path(os.getenv("SIGHT_POC_DATA_LAKE_ROOT", "/tmp/sight-poc-data-lake"))
 
 
 def _lake_bucket() -> str:
-    return os.getenv("HYDROSAT_DATA_LAKE_BUCKET", "").strip()
+    return os.getenv("SIGHT_POC_DATA_LAKE_BUCKET", "").strip()
 
 
 def _lake_prefix() -> str:
-    return os.getenv("HYDROSAT_DATA_LAKE_PREFIX", "hydrosat").strip("/")
+    return os.getenv("SIGHT_POC_DATA_LAKE_PREFIX", "sight-poc").strip("/")
 
 
 def _dbt_project_dir() -> Path:
@@ -81,14 +81,14 @@ def _dbt_project_dir() -> Path:
 
 
 def _dbt_duckdb_path() -> Path:
-    override = os.getenv("HYDROSAT_DBT_DUCKDB_PATH", "")
+    override = os.getenv("SIGHT_POC_DBT_DUCKDB_PATH", "")
     if override:
         return Path(override)
-    return _lake_root() / "_dbt" / "hydrosat.duckdb"
+    return _lake_root() / "_dbt" / "sight_poc.duckdb"
 
 
 def _runtime_home_dir() -> Path:
-    override = os.getenv("HYDROSAT_RUNTIME_HOME", "").strip()
+    override = os.getenv("SIGHT_POC_RUNTIME_HOME", "").strip()
     if override:
         return Path(override)
 
@@ -96,11 +96,11 @@ def _runtime_home_dir() -> Path:
     if dagster_home:
         return Path(dagster_home).parent
 
-    return Path("/tmp/hydrosat-home")
+    return Path("/tmp/sight-poc-home")
 
 
 def _dbt_command_timeout_seconds() -> int:
-    override = os.getenv("HYDROSAT_DBT_TIMEOUT_SECONDS", "").strip()
+    override = os.getenv("SIGHT_POC_DBT_TIMEOUT_SECONDS", "").strip()
     if override:
         return int(override)
     return 180
@@ -345,11 +345,11 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
 
     env = {
         **os.environ,
-        "HYDROSAT_RAW_URI": dbt_raw_uri,
-        "HYDROSAT_STAGING_URI": dbt_staging_uri,
-        "HYDROSAT_CURATED_URI": dbt_curated_uri,
-        "HYDROSAT_BATCH_DATE": raw_batch["partition_date"],
-        "HYDROSAT_DUCKDB_PATH": str(duckdb_path),
+        "SIGHT_POC_RAW_URI": dbt_raw_uri,
+        "SIGHT_POC_STAGING_URI": dbt_staging_uri,
+        "SIGHT_POC_CURATED_URI": dbt_curated_uri,
+        "SIGHT_POC_BATCH_DATE": raw_batch["partition_date"],
+        "SIGHT_POC_DUCKDB_PATH": str(duckdb_path),
     }
     runtime_home = _runtime_home_dir()
     runtime_home.mkdir(parents=True, exist_ok=True)
@@ -366,7 +366,7 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
             "--profiles-dir",
             str(_dbt_project_dir()),
             "--target",
-            "hydrosat",
+            "sight_poc",
         ),
         env,
     )
@@ -379,7 +379,7 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
             "--profiles-dir",
             str(_dbt_project_dir()),
             "--target",
-            "hydrosat",
+            "sight_poc",
         ),
         env,
     )
@@ -407,14 +407,14 @@ def transform_with_dbt(context, raw_batch: dict) -> dict:
 
 
 @job
-def hydrosat_lakehouse_job():
+def sight_poc_lakehouse_job():
     transform_with_dbt(extract_satellite_observations())
 
 
 @schedule(
     cron_schedule="0 3 * * *",
     execution_timezone="UTC",
-    job=hydrosat_lakehouse_job,
+    job=sight_poc_lakehouse_job,
     name="daily_lakehouse_schedule",
 )
 def daily_lakehouse_schedule(_context):
@@ -422,7 +422,7 @@ def daily_lakehouse_schedule(_context):
     return build_lakehouse_run_config(batch_date=_operational_partition_date())
 
 
-@sensor(name="lakehouse_partition_recovery_sensor", minimum_interval_seconds=300, job=hydrosat_lakehouse_job)
+@sensor(name="lakehouse_partition_recovery_sensor", minimum_interval_seconds=300, job=sight_poc_lakehouse_job)
 def lakehouse_partition_recovery_sensor(_context: SensorEvaluationContext):
     """Trigger the daily partition if the expected curated output is still missing."""
     partition_date = _operational_partition_date()
@@ -434,13 +434,13 @@ def lakehouse_partition_recovery_sensor(_context: SensorEvaluationContext):
         run_key=f"lakehouse-recovery-{partition_date}",
         run_config=build_lakehouse_run_config(batch_date=partition_date),
         tags={
-            "hydrosat/partition_date": partition_date,
-            "hydrosat/trigger": "recovery-sensor",
+            "sight-poc/partition_date": partition_date,
+            "sight-poc/trigger": "recovery-sensor",
         },
     )
 
 
-@run_failure_sensor(name="alertmanager_job_failure_alert", monitored_jobs=[hydrosat_lakehouse_job], minimum_interval_seconds=30)
+@run_failure_sensor(name="alertmanager_job_failure_alert", monitored_jobs=[sight_poc_lakehouse_job], minimum_interval_seconds=30)
 def alertmanager_job_failure_alert(context: RunFailureSensorContext):
     """Optionally forward Dagster job failures to Alertmanager when ALERTMANAGER_URL is configured."""
     alertmanager_url = os.getenv("ALERTMANAGER_URL", "")
@@ -474,7 +474,7 @@ def alertmanager_job_failure_alert(context: RunFailureSensorContext):
 
 
 defs = Definitions(
-    jobs=[hydrosat_lakehouse_job],
+    jobs=[sight_poc_lakehouse_job],
     schedules=[daily_lakehouse_schedule],
     sensors=[alertmanager_job_failure_alert, lakehouse_partition_recovery_sensor],
 )

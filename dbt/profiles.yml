@@ -1,9 +1,9 @@
-hydrosat_lakehouse:
-  target: hydrosat
+sight_poc_lakehouse:
+  target: sight_poc
   outputs:
-    hydrosat:
+    sight_poc:
       type: duckdb
-      path: "{{ env_var('HYDROSAT_DUCKDB_PATH', '/tmp/hydrosat-data-lake/_dbt/hydrosat.duckdb') }}"
+      path: "{{ env_var('SIGHT_POC_DUCKDB_PATH', '/tmp/sight-poc-data-lake/_dbt/sight_poc.duckdb') }}"
       threads: 1
       extensions:
         - httpfs

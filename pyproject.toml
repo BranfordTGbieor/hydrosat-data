@@ -3,10 +3,10 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hydrosat-dagster"
+name = "sight-poc-dagster"
 version = "0.1.0"
-description = "Dagster code location for the Hydrosat technical assignment."
-requires-python = ">=3.11"
+description = "Sight PoC orchestration application, currently implemented with Dagster."
+requires-python = ">=3.12,<3.13"
 dependencies = [
   "boto3>=1.34.0",
   "dagster>=1.7.0",
@@ -20,11 +20,36 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "coverage[toml]>=7.6.0",
+  "pre-commit>=4.0.0",
   "pytest>=8.0.0",
+  "pytest-cov>=5.0.0",
+  "ruff>=0.6.0",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
 
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--cov=sight_poc_dagster --cov-report=term-missing --cov-report=xml"
+
+[tool.coverage.run]
+branch = true
+source = ["sight_poc_dagster"]
+
+[tool.coverage.report]
+fail_under = 85
+skip_empty = true
+show_missing = true

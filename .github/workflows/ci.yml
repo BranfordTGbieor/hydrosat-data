@@ -19,6 +19,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHON_VERSION: "3.12"
+
 jobs:
   changes:
     name: Detect Changes
@@ -38,7 +41,7 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'Dockerfile'
               - 'pyproject.toml'
-              - 'hydrosat_dagster/**'
+              - 'sight_poc_dagster/**'
               - 'tests/**'
               - 'dbt/**'
 
@@ -51,8 +54,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Compile Dagster package
-        run: python -m compileall hydrosat_dagster tests
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync project environment
+        run: uv sync --all-extras
+
+      - name: Compile package
+        run: uv run python -m compileall sight_poc_dagster tests
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Ruff lint
+        run: uv run ruff check .
 
   test:
     name: Tests
@@ -68,15 +88,16 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync project environment
+        run: uv sync --all-extras
 
       - name: Run tests
-        run: pytest
+        run: uv run pytest
 
   dbt-validate:
     name: dbt Validate
@@ -86,11 +107,11 @@ jobs:
       - test
     if: github.ref_type == 'tag' || needs.changes.outputs.runtime == 'true'
     env:
-      HYDROSAT_BATCH_DATE: "2026-04-07"
-      HYDROSAT_DUCKDB_PATH: /tmp/hydrosat-ci/hydrosat.duckdb
-      HYDROSAT_RAW_URI: /tmp/hydrosat-ci/raw/sample.jsonl
-      HYDROSAT_STAGING_URI: /tmp/hydrosat-ci/staging/sample.jsonl
-      HYDROSAT_CURATED_URI: /tmp/hydrosat-ci/curated/sample.json
+      SIGHT_POC_BATCH_DATE: "2026-04-07"
+      SIGHT_POC_DUCKDB_PATH: /tmp/sight-poc-ci/sight-poc.duckdb
+      SIGHT_POC_RAW_URI: /tmp/sight-poc-ci/raw/sample.jsonl
+      SIGHT_POC_STAGING_URI: /tmp/sight-poc-ci/staging/sample.jsonl
+      SIGHT_POC_CURATED_URI: /tmp/sight-poc-ci/curated/sample.json
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -98,37 +119,38 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync project environment
+        run: uv sync --all-extras
 
       - name: Prepare dbt sample input
         run: |
-          mkdir -p /tmp/hydrosat-ci/raw /tmp/hydrosat-ci/staging /tmp/hydrosat-ci/curated
-          cat > "${HYDROSAT_RAW_URI}" <<'EOF'
+          mkdir -p /tmp/sight-poc-ci/raw /tmp/sight-poc-ci/staging /tmp/sight-poc-ci/curated
+          cat > "${SIGHT_POC_RAW_URI}" <<'EOF'
           {"batch_id":"ci-batch","scene_id":"scene-001","tile_id":"T31UFQ","captured_at":"2026-04-07T10:15:00Z","surface_temp_c":27.4,"ndvi":0.82,"cloud_cover_pct":4.1}
           {"batch_id":"ci-batch","scene_id":"scene-002","tile_id":"T31UGQ","captured_at":"2026-04-07T10:20:00Z","surface_temp_c":28.1,"ndvi":0.79,"cloud_cover_pct":6.5}
           EOF
 
       - name: Run dbt build
         run: |
-          python -m dbt.cli.main build \
+          uv run python -m dbt.cli.main build \
             --project-dir dbt \
             --profiles-dir dbt \
-            --target hydrosat
+            --target sight-poc
 
       - name: Validate export macro
         run: |
-          python -m dbt.cli.main run-operation export_lake_outputs \
+          uv run python -m dbt.cli.main run-operation export_lake_outputs \
             --project-dir dbt \
             --profiles-dir dbt \
-            --target hydrosat
+            --target sight-poc
 
-          test -s "${HYDROSAT_STAGING_URI}"
-          test -s "${HYDROSAT_CURATED_URI}"
+          test -s "${SIGHT_POC_STAGING_URI}"
+          test -s "${SIGHT_POC_CURATED_URI}"
 
   build:
     name: Build
@@ -142,7 +164,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Dagster image
-        run: docker build -t hydrosat-dagster:ci .
+        run: docker build -t sight-poc-dagster:ci .
 
   publish:
     name: Publish
@@ -187,8 +209,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.HYDROSAT_INFRA_REPO_TOKEN }}
-          repository: BranfordTGbieor/hydrosat-infra
+          token: ${{ secrets.SIGHT_POC_INFRA_REPO_TOKEN }}
+          repository: BranfordTGbieor/sight-poc-infra
           event-type: promote-dagster-image
           client-payload: >-
             {

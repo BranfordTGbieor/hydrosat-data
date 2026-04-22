@@ -1,6 +1,6 @@
 {% macro export_lake_outputs() %}
-  {% set staging_uri = env_var('HYDROSAT_STAGING_URI') %}
-  {% set curated_uri = env_var('HYDROSAT_CURATED_URI') %}
+  {% set staging_uri = env_var('SIGHT_POC_STAGING_URI') %}
+  {% set curated_uri = env_var('SIGHT_POC_CURATED_URI') %}
 
   {% set export_staging %}
     copy (

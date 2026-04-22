@@ -1,6 +1,6 @@
 select
   batch_id,
-  cast('{{ env_var("HYDROSAT_BATCH_DATE") }}' as date) as partition_date,
+  cast('{{ env_var("SIGHT_POC_BATCH_DATE") }}' as date) as partition_date,
   scene_id,
   tile_id,
   cast(captured_at as timestamp) as captured_at,
@@ -15,4 +15,4 @@ select
     when cast(ndvi as double) >= 0.8 then 'dense'
     else 'medium'
   end as vegetation_band
-from read_json_auto('{{ env_var("HYDROSAT_RAW_URI") }}', format='newline_delimited')
+from read_json_auto('{{ env_var("SIGHT_POC_RAW_URI") }}', format='newline_delimited')

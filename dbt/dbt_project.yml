@@ -1,8 +1,8 @@
-name: hydrosat_lakehouse
+name: sight_poc_lakehouse
 version: "1.0"
 config-version: 2
 
-profile: hydrosat_lakehouse
+profile: sight_poc_lakehouse
 
 model-paths: ["models"]
 macro-paths: ["macros"]
@@ -12,7 +12,7 @@ clean-targets:
   - "logs"
 
 models:
-  hydrosat_lakehouse:
+  sight_poc_lakehouse:
     staging:
       +materialized: view
     curated:
