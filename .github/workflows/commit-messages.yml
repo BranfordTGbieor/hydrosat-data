@@ -48,7 +48,11 @@ jobs:
           fi
 
           if [ -n "${BEFORE_SHA}" ] && [ "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]; then
-            echo "rev_range=${BEFORE_SHA}..${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+            if git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+              echo "rev_range=${BEFORE_SHA}..${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+            else
+              echo "single_commit=${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+            fi
           else
             echo "single_commit=${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
           fi

@@ -63,7 +63,8 @@ def validate_message(message: str) -> list[str]:
     if not is_valid_title_prefix(title):
         allowed = ", ".join(ALLOWED_TYPES)
         errors.append(
-            "commit title must start with an allowed type using '<type> summary' or '<type>(scope): summary' "
+            "commit title must start with an allowed type using "
+            "'<type> summary' or '<type>(scope): summary' "
             f"where type is one of: {allowed}"
         )
 
@@ -71,7 +72,9 @@ def validate_message(message: str) -> list[str]:
         errors.append("commit title must not end with a period")
 
     if len(lines) < 3:
-        errors.append("commit message must include a blank line and at least one bullet in the body")
+        errors.append(
+            "commit message must include a blank line and at least one bullet in the body"
+        )
         return errors
 
     if lines[1].strip() != "":
@@ -103,9 +106,18 @@ def validate_file(path: Path) -> list[str]:
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for commit, range, or hook-file validation."""
     parser = argparse.ArgumentParser(description="Validate repo commit message format")
-    parser.add_argument("commit_msg_file", nargs="?", help="commit message file path for commit-msg hooks")
+    parser.add_argument(
+        "commit_msg_file",
+        nargs="?",
+        help="commit message file path for commit-msg hooks",
+    )
     parser.add_argument("--rev-range", help="git revision range to validate")
-    parser.add_argument("--commit", action="append", default=[], help="single commit SHA to validate")
+    parser.add_argument(
+        "--commit",
+        action="append",
+        default=[],
+        help="single commit SHA to validate",
+    )
     return parser.parse_args()
 
 
@@ -125,7 +137,10 @@ def main() -> int:
         for commit in args.commit:
             failures.append((commit, validate_commit(commit)))
     else:
-        print("Provide a commit message file, --rev-range, or --commit.", file=sys.stderr)
+        print(
+            "Provide a commit message file, --rev-range, or --commit.",
+            file=sys.stderr,
+        )
         return 2
 
     failed = [(target, errors) for target, errors in failures if errors]
