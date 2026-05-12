@@ -1,3 +1,5 @@
+"""Dagster definitions for the Sight PoC sample lakehouse workflow."""
+
 import json
 import os
 import subprocess
@@ -60,6 +62,7 @@ SAMPLE_SATELLITE_OBSERVATIONS = [
 
 
 def _repo_root() -> Path:
+    """Return the repository root so dbt assets can be resolved relative to code."""
     return Path(__file__).resolve().parent.parent
 
 
@@ -69,18 +72,22 @@ def _lake_root() -> Path:
 
 
 def _lake_bucket() -> str:
+    """Return the optional S3 bucket name used for the raw/staging/curated lake."""
     return os.getenv("SIGHT_POC_DATA_LAKE_BUCKET", "").strip()
 
 
 def _lake_prefix() -> str:
+    """Return the path prefix beneath the S3 bucket when object storage is enabled."""
     return os.getenv("SIGHT_POC_DATA_LAKE_PREFIX", "sight-poc").strip("/")
 
 
 def _dbt_project_dir() -> Path:
+    """Return the bundled dbt project directory used by the transform op."""
     return _repo_root() / "dbt"
 
 
 def _dbt_duckdb_path() -> Path:
+    """Resolve the DuckDB file path used by the local dbt profile."""
     override = os.getenv("SIGHT_POC_DBT_DUCKDB_PATH", "")
     if override:
         return Path(override)
@@ -88,6 +95,7 @@ def _dbt_duckdb_path() -> Path:
 
 
 def _runtime_home_dir() -> Path:
+    """Resolve the writable runtime home used for dbt and Dagster transient files."""
     override = os.getenv("SIGHT_POC_RUNTIME_HOME", "").strip()
     if override:
         return Path(override)
@@ -100,6 +108,7 @@ def _runtime_home_dir() -> Path:
 
 
 def _dbt_command_timeout_seconds() -> int:
+    """Return the maximum runtime allowed for a dbt invocation."""
     override = os.getenv("SIGHT_POC_DBT_TIMEOUT_SECONDS", "").strip()
     if override:
         return int(override)
@@ -107,6 +116,7 @@ def _dbt_command_timeout_seconds() -> int:
 
 
 def _partition_date(value: str | None) -> str:
+    """Validate or default the partition date used by the extract op."""
     if value:
         date.fromisoformat(value)
         return value
@@ -114,14 +124,17 @@ def _partition_date(value: str | None) -> str:
 
 
 def _operational_partition_date() -> str:
+    """Return today's UTC date for schedule and recovery-sensor partitioning."""
     return datetime.now(UTC).date().isoformat()
 
 
 def _s3_client():
+    """Build the boto3 S3 client lazily so tests can patch it cleanly."""
     return boto3.client("s3")
 
 
 def _lake_uri(*parts: str) -> str:
+    """Build an S3 or local filesystem URI for a lake layer path."""
     relative_path = "/".join(part.strip("/") for part in parts if part)
     bucket = _lake_bucket()
     prefix = _lake_prefix()
@@ -134,12 +147,14 @@ def _lake_uri(*parts: str) -> str:
 
 
 def _split_s3_uri(uri: str) -> tuple[str, str]:
+    """Split an s3:// URI into bucket and key components."""
     without_scheme = uri.removeprefix("s3://")
     bucket, _, key = without_scheme.partition("/")
     return bucket, key
 
 
 def _write_text(uri: str, text: str, content_type: str) -> None:
+    """Write text either to S3 or to the local filesystem mirror."""
     if uri.startswith("s3://"):
         bucket, key = _split_s3_uri(uri)
         _s3_client().put_object(
@@ -153,6 +168,7 @@ def _write_text(uri: str, text: str, content_type: str) -> None:
 
 
 def _read_text(uri: str) -> str:
+    """Read text either from S3 or from the local filesystem mirror."""
     if uri.startswith("s3://"):
         bucket, key = _split_s3_uri(uri)
         response = _s3_client().get_object(Bucket=bucket, Key=key)
@@ -162,24 +178,29 @@ def _read_text(uri: str) -> str:
 
 
 def _jsonl_write(uri: str, records: list[dict]) -> None:
+    """Serialize a list of records as newline-delimited JSON."""
     _write_text(
         uri, "".join(f"{json.dumps(record)}\n" for record in records), "application/x-ndjson"
     )
 
 
 def _jsonl_read(uri: str) -> list[dict]:
+    """Read newline-delimited JSON records from S3 or local storage."""
     return [json.loads(line) for line in _read_text(uri).splitlines() if line.strip()]
 
 
 def _json_read(uri: str) -> list[dict]:
+    """Read a JSON array document from S3 or local storage."""
     return json.loads(_read_text(uri))
 
 
 def _curated_partition_prefix(partition_date: str) -> str:
+    """Return the partition prefix used for curated tile-summary outputs."""
     return _lake_uri("curated", "tile_summary", f"partition_date={partition_date}")
 
 
 def _partition_has_curated_output(partition_date: str) -> bool:
+    """Check whether the curated partition already exists in local or object storage."""
     partition_prefix = _curated_partition_prefix(partition_date)
 
     if partition_prefix.startswith("s3://"):
@@ -194,25 +215,30 @@ def _partition_has_curated_output(partition_date: str) -> bool:
 
 
 def _ensure_local_parent_dir(uri: str) -> None:
+    """Create parent directories for local targets while leaving S3 URIs untouched."""
     if uri.startswith("s3://"):
         return
     Path(uri).parent.mkdir(parents=True, exist_ok=True)
 
 
 def _dbt_work_dir(batch_id: str, partition_date: str) -> Path:
+    """Return the per-run local work directory used to stage dbt inputs and outputs."""
     return _runtime_home_dir() / "dbt-work" / partition_date / batch_id
 
 
 def _stage_local_copy(source_uri: str, destination_path: Path, content_type: str) -> str:
+    """Copy a lake object into the local dbt workspace and return its local path."""
     _write_text(str(destination_path), _read_text(source_uri), content_type)
     return str(destination_path)
 
 
 def _publish_local_copy(source_path: Path, destination_uri: str, content_type: str) -> None:
+    """Publish a locally rendered dbt output back into the lake layout."""
     _write_text(destination_uri, source_path.read_text(encoding="utf-8"), content_type)
 
 
 def _run_dbt_command(command: list[str], env: dict[str, str]) -> None:
+    """Execute a dbt command with timeout and rich Dagster failure reporting."""
     timeout_seconds = _dbt_command_timeout_seconds()
     try:
         process = subprocess.run(
@@ -241,6 +267,7 @@ def _run_dbt_command(command: list[str], env: dict[str, str]) -> None:
 
 
 def _dbt_cli_command(*args: str) -> list[str]:
+    """Build a python -m dbt.cli.main command that matches the active runtime."""
     return [sys.executable, "-m", "dbt.cli.main", *args]
 
 
@@ -278,6 +305,7 @@ def build_alertmanager_payload(job_name: str, run_id: str, failure_message: str)
 
 
 def build_lakehouse_run_config(batch_date: str, should_fail: bool = False) -> dict:
+    """Build Dagster run config for the extract op used by schedules, sensors, and tests."""
     return {
         "ops": {
             "extract_satellite_observations": {

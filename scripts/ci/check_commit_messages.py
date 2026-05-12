@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Validate repo commit messages in CI and local commit-msg hooks."""
 from __future__ import annotations
 
 import argparse
@@ -14,19 +15,23 @@ IGNORED_PREFIXES = ("Merge ", "Revert ")
 
 
 def run_git(*args: str) -> str:
+    """Run a git command and return stripped stdout."""
     return subprocess.check_output(["git", *args], text=True).strip()
 
 
 def get_commit_message(commit: str) -> str:
+    """Return the full message body for a commit SHA or ref."""
     return run_git("show", "-s", "--format=%B", commit)
 
 
 def get_commits_in_range(rev_range: str) -> list[str]:
+    """Return commits in chronological order for the provided revision range."""
     output = run_git("rev-list", "--reverse", rev_range)
     return [line for line in output.splitlines() if line]
 
 
 def is_valid_title_prefix(title: str) -> bool:
+    """Allow either '<type> summary' or '<type>(scope): summary' titles."""
     if title.startswith(TITLE_PREFIXES):
         return True
 
@@ -38,6 +43,7 @@ def is_valid_title_prefix(title: str) -> bool:
 
 
 def validate_message(message: str) -> list[str]:
+    """Validate one commit message and return human-readable errors."""
     errors: list[str] = []
     lines = message.splitlines()
 
@@ -85,14 +91,17 @@ def validate_message(message: str) -> list[str]:
 
 
 def validate_commit(commit: str) -> list[str]:
+    """Validate a stored commit object."""
     return validate_message(get_commit_message(commit))
 
 
 def validate_file(path: Path) -> list[str]:
+    """Validate a raw commit message file from a commit-msg hook."""
     return validate_message(path.read_text(encoding="utf-8"))
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for commit, range, or hook-file validation."""
     parser = argparse.ArgumentParser(description="Validate repo commit message format")
     parser.add_argument("commit_msg_file", nargs="?", help="commit message file path for commit-msg hooks")
     parser.add_argument("--rev-range", help="git revision range to validate")
@@ -101,6 +110,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """Run commit-message validation and print failures in CI-friendly form."""
     args = parse_args()
     failures: list[tuple[str, list[str]]] = []
 
